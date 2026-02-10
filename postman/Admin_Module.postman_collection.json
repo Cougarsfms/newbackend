@@ -1,0 +1,85 @@
+{
+    "info": {
+        "_postman_id": "admin-module-api",
+        "name": "Admin Module API",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Get Users",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/admin/users?phone=&role=&status=",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "admin",
+                        "users"
+                    ],
+                    "query": [
+                        {
+                            "key": "phone",
+                            "value": ""
+                        },
+                        {
+                            "key": "role",
+                            "value": ""
+                        },
+                        {
+                            "key": "status",
+                            "value": ""
+                        }
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Update User Status",
+            "request": {
+                "method": "PATCH",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json",
+                        "type": "text"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n    \"status\": \"BLOCKED\",\n    \"reason\": \"Suspicious activity detected\"\n}"
+                },
+                "url": {
+                    "raw": "{{baseUrl}}/admin/users/:id/status",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "admin",
+                        "users",
+                        ":id",
+                        "status"
+                    ],
+                    "variable": [
+                        {
+                            "key": "id",
+                            "value": "USER_ID_HERE",
+                            "description": "The ID of the user to update"
+                        }
+                    ]
+                }
+            },
+            "response": []
+        }
+    ],
+    "variable": [
+        {
+            "key": "baseUrl",
+            "value": "http://localhost:3000",
+            "type": "string"
+        }
+    ]
+}

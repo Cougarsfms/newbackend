@@ -1,0 +1,703 @@
+{
+    "info": {
+        "_postman_id": "dailychores-backend-api",
+        "name": "DailyChores Backend API - Complete",
+        "description": "Complete API collection for DailyChores backend including Auth, Services, Bookings, and Admin modules",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Authentication",
+            "item": [
+                {
+                    "name": "Login",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"token\": \"firebase_id_token_here\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/auth/login",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "login"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Services",
+            "item": [
+                {
+                    "name": "Get Categories",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/services/categories",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "services",
+                                "categories"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Search Services",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/services/search?q=cleaning",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "services",
+                                "search"
+                            ],
+                            "query": [
+                                {
+                                    "key": "q",
+                                    "value": "cleaning"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Seed Services",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/services/seed",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "services",
+                                "seed"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Bookings",
+            "item": [
+                {
+                    "name": "Create Booking",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"serviceId\": \"service-uuid\",\n    \"date\": \"2026-01-20T10:00:00Z\",\n    \"phoneNumber\": \"+1234567890\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/bookings",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "bookings"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get User Bookings",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/bookings/user/:phone",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "bookings",
+                                "user",
+                                ":phone"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "phone",
+                                    "value": "+1234567890"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Admin - User Management",
+            "item": [
+                {
+                    "name": "Get Users",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/users?name=&phone=&role=&status=",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "users"
+                            ],
+                            "query": [
+                                {
+                                    "key": "name",
+                                    "value": ""
+                                },
+                                {
+                                    "key": "phone",
+                                    "value": ""
+                                },
+                                {
+                                    "key": "role",
+                                    "value": "",
+                                    "description": "CUSTOMER, PROVIDER, ADMIN"
+                                },
+                                {
+                                    "key": "status",
+                                    "value": "",
+                                    "description": "ACTIVE, BLOCKED"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Update User Status",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"status\": \"BLOCKED\",\n    \"reason\": \"Suspicious activity detected\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/users/:id/status",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "users",
+                                ":id",
+                                "status"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "user-uuid"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get User History",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/users/:id/history",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "users",
+                                ":id",
+                                "history"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "user-uuid"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Admin - KYC Management",
+            "item": [
+                {
+                    "name": "Get Pending KYC",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/kyc/pending",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "kyc",
+                                "pending"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get KYC Details",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/kyc/:id",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "kyc",
+                                ":id"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "kyc-uuid"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Update KYC Status",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"status\": \"APPROVED\",\n    \"remarks\": \"All documents verified successfully\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/kyc/:id/status",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "kyc",
+                                ":id",
+                                "status"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "kyc-uuid"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Admin - Booking Management",
+            "item": [
+                {
+                    "name": "Get Bookings",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/bookings?status=&userId=",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "bookings"
+                            ],
+                            "query": [
+                                {
+                                    "key": "status",
+                                    "value": "",
+                                    "description": "PENDING, CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED"
+                                },
+                                {
+                                    "key": "userId",
+                                    "value": ""
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get Booking Details",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/bookings/:id",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "bookings",
+                                ":id"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "booking-uuid"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Update Booking Status",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"status\": \"CANCELLED\",\n    \"reason\": \"Customer requested cancellation\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/bookings/:id/status",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "bookings",
+                                ":id",
+                                "status"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "booking-uuid"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Admin - Pricing & Commission",
+            "item": [
+                {
+                    "name": "Create Pricing Rule",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"service_type\": \"Cleaning\",\n    \"city\": \"New York\",\n    \"base_price\": 50.00\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/pricing-rules",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "pricing-rules"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get Pricing Rules",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/pricing-rules?city=",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "pricing-rules"
+                            ],
+                            "query": [
+                                {
+                                    "key": "city",
+                                    "value": ""
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Create Surge Rule",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"pricingRuleId\": \"pricing-rule-uuid\",\n    \"multiplier\": 1.5,\n    \"condition\": 0.8\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/surge-rules",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "surge-rules"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get Surge Rules",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/surge-rules",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "surge-rules"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Admin - Finance & Settlements",
+            "item": [
+                {
+                    "name": "Get Wallets",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/wallets",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "wallets"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get Wallet Ledger",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/wallets/:id/ledger",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "wallets",
+                                ":id",
+                                "ledger"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "wallet-uuid"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get Settlements",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/settlements",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "settlements"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Get Settlement Details",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/settlements/:id",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "settlements",
+                                ":id"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "settlement-uuid"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Admin - Analytics & Reporting",
+            "item": [
+                {
+                    "name": "Dashboard Statistics",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/analytics/dashboard",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "analytics",
+                                "dashboard"
+                            ]
+                        },
+                        "description": "Returns: totalUsers, activeUsers, totalBookings, pendingBookings, totalRevenue"
+                    }
+                },
+                {
+                    "name": "User Analytics",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/analytics/users",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "analytics",
+                                "users"
+                            ]
+                        },
+                        "description": "Returns user distribution by role and status"
+                    }
+                },
+                {
+                    "name": "Booking Analytics",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/analytics/bookings",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "analytics",
+                                "bookings"
+                            ]
+                        },
+                        "description": "Returns booking distribution by status and recent bookings count"
+                    }
+                },
+                {
+                    "name": "Revenue Analytics",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{baseUrl}}/admin/analytics/revenue",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "admin",
+                                "analytics",
+                                "revenue"
+                            ]
+                        },
+                        "description": "Returns revenue breakdown by city with booking counts"
+                    }
+                }
+            ]
+        }
+    ],
+    "variable": [
+        {
+            "key": "baseUrl",
+            "value": "http://localhost:3000",
+            "type": "string"
+        }
+    ]
+}

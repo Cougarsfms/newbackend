@@ -1,0 +1,459 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  PROVIDER
+  ADMIN
+}
+
+model User {
+  id          String    @id @default(uuid())
+  phoneNumber String    @unique
+  email       String?   @unique
+  name        String?
+  role        Role      @default(CUSTOMER)
+  bookings    Booking[]
+
+  status String @default("ACTIVE")
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  kycrecords       KYCRecord[]
+  serviceProviders ServiceProvider[]
+  wallets          Wallet[]
+  customers        Customer[]
+}
+
+model ServiceCategory {
+  id    String        @id @default(uuid())
+  name  String
+  icon  String // URL or Icon Name
+  items ServiceItem[]
+  active Boolean @default(true) 
+}
+
+model ServiceItem {
+  id          String  @id @default(uuid())
+  name        String
+  description String
+  price       Decimal
+
+  categoryId String
+  category   ServiceCategory @relation(fields: [categoryId], references: [id])
+  bookings   Booking[]
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Booking {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  serviceId String
+  service   ServiceItem @relation(fields: [serviceId], references: [id])
+
+  status BookingStatus @default(PENDING)
+  date   DateTime
+  city   String?
+
+  totalAmount Decimal
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  bookingOverrides BookingOverride[]
+}
+
+model PricingRule {
+  id           String  @id @default(uuid())
+  service_type String
+  city         String
+  base_price   Decimal
+}
+
+model SurgeRule {
+  id            String  @id @default(uuid())
+  PricingRuleid String
+  multiplier    Decimal
+  condition     Decimal
+}
+
+model AdminRole {
+  id          String      @id @default(uuid())
+  role_name   String
+  permissions String[]    @default([])
+  adminUsers  AdminUser[]
+}
+
+model AdminUser {
+  id          String     @id @default(uuid())
+  name        String?
+  role_id     String
+  role        AdminRole  @relation(fields: [role_id], references: [id])
+  email       String?    @unique
+  phoneNumber String     @unique
+  status      String     @default("ACTIVE")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  auditLogs   AuditLog[]
+}
+
+model AuditLog {
+  id         String    @id @default(uuid())
+  admin_id   String
+  admin_user AdminUser @relation(fields: [admin_id], references: [id])
+  action     String
+  action_at  DateTime  @default(now())
+  details    String?
+}
+
+model KYCRecord {
+  id           String        @id @default(uuid())
+  user_id      String
+  user         User          @relation(fields: [user_id], references: [id])
+  status       String        @default("PENDING")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  kycdocuments KYCDocument[]
+}
+
+model BookingOverride {
+  id         String   @id @default(uuid())
+  booking_id String
+  booking    Booking  @relation(fields: [booking_id], references: [id])
+  status     String   @default("PENDING")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model KYCDocument {
+  id            String    @id @default(uuid())
+  kyc_id        String
+  kyc           KYCRecord @relation(fields: [kyc_id], references: [id])
+  document_type String
+  file_url      String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model ServiceProvider {
+  id                String              @id @default(uuid())
+  user_id           String
+  user              User                @relation(fields: [user_id], references: [id])
+  name              String
+  phoneNumber       String
+  status            String              @default("PENDING")
+  rating            Int                 @default(0)
+  Kyc_status        String              @default("PENDING")
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  providerProfiles  ProviderProfile[]
+  availabilities    Availability[]
+  spBookings        SpBooking[]
+  performanceMetrics performancemetric[]
+  fraudFlags        FraudFlag[]
+  violations        Violation[]
+  locationPings     LocationPing[]
+  ratings           Rating[]
+  spWallets         SpWallet[]
+  customerBookings  CustomerBooking[]
+}
+
+model ProviderProfile {
+  id          String          @id @default(uuid())
+  provider_id String
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
+  services    String[]
+  experiences String[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model Availability {
+  id          String          @id @default(uuid())
+  provider_id String
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
+  is_online   Boolean         @default(true)
+  last_seen   DateTime        @default(now())
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model SpBooking {
+  id            String          @id @default(uuid())
+  provider_id   String
+  provider      ServiceProvider @relation(fields: [provider_id], references: [id])
+  status        String          @default("PENDING")
+  start_time    DateTime
+  end_time      DateTime
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  locationPings LocationPing[]
+  ratings       Rating[]
+}
+
+model performancemetric {
+  id          String          @id @default(uuid())
+  provider_id String
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
+  metric      String
+  value       Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model FraudFlag {
+  id          String          @id @default(uuid())
+  provider_id String
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
+  reason      String
+  severity    String          @default("LOW")
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model Violation {
+  id          String          @id @default(uuid())
+  provider_id String
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
+  rule        String
+  action      String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model LocationPing {
+  id          String          @id @default(uuid())
+  provider_id String
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
+  booking_id  String
+  booking     SpBooking       @relation(fields: [booking_id], references: [id])
+  latitude    Float
+  longitude   Float
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model Rating {
+  id          String          @id @default(uuid())
+  provider_id String
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
+  booking_id  String
+  booking     SpBooking       @relation(fields: [booking_id], references: [id])
+  score       Int             @default(0)
+  comment     String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model SpWallet {
+  id          String         @id @default(uuid())
+  provider_id String
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
+  balance     Decimal        @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  payouts     Payout[]
+}
+
+model Payout {
+  id          String   @id @default(uuid())
+  spwallet_id String
+  spwallet    SpWallet @relation(fields: [spwallet_id], references: [id])
+  amount      Decimal
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Wallet {
+  id            String         @id @default(uuid())
+  user_id       String
+  user          User           @relation(fields: [user_id], references: [id])
+  balance       Decimal        @default(0)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  walletLedgers WalletLedger[]
+  settlements   settlement[]
+}
+
+model WalletLedger {
+  id         String   @id @default(uuid())
+  wallet_id  String
+  wallet     Wallet   @relation(fields: [wallet_id], references: [id])
+  entry_type String
+  amount     Decimal
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model settlement {
+  id        String   @id @default(uuid())
+  wallet_id String
+  wallet    Wallet   @relation(fields: [wallet_id], references: [id])
+  amount    Decimal
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}  
+
+model Customer {
+  id          String   @id @default(uuid())
+  user_id     String
+  user        User     @relation(fields: [user_id], references: [id])
+  name        String
+  phoneNumber String
+  status      String   @default("PENDING")
+  trust_score Int      @default(0)  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  customerViolations CustomerViolation[]
+  customerProfiles   CustomerProfile[]
+  customerAddresses  CustomerAddress[]
+  authSessions       AuthSession[]
+  customerWallets    CustomerWallet[]
+  customerBookings   CustomerBooking[]
+  supportTickets     SupportTicket[]
+} 
+
+model CustomerViolation {
+  id          String   @id @default(uuid())
+  customer_id String
+  customer    Customer @relation(fields: [customer_id], references: [id])
+  reason      String
+  severity    String   @default("LOW")
+  action      String   @default("PENDING")  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+} 
+
+model CustomerProfile {
+  id          String   @id @default(uuid())
+  customer_id String
+  customer    Customer @relation(fields: [customer_id], references: [id])
+  email       String  
+  profile     String
+  preferences String[]  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+} 
+
+model CustomerAddress {
+  id          String   @id @default(uuid())
+  customer_id String
+  customer    Customer @relation(fields: [customer_id], references: [id])
+  address     String
+  latitude    Float
+  longitude   Float 
+  city        String
+  state       String
+  country     String
+  zipcode     String
+  label       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}   
+
+model AuthSession {
+  id          String   @id @default(uuid())
+  customer_id String
+  customer    Customer @relation(fields: [customer_id], references: [id]) 
+  device_id   String
+  device_type String
+  lastlogin   DateTime @default(now())  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+} 
+
+model CustomerWallet {
+  id          String   @id @default(uuid())
+  customer_id String
+  customer    Customer @relation(fields: [customer_id], references: [id])
+  balance     Decimal  @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  customerWalletLedgers CustomerWalletLedger[]
+} 
+
+model CustomerWalletLedger {
+  id          String   @id @default(uuid())
+  CustomerWallet_id String
+  CustomerWallet    CustomerWallet @relation(fields: [CustomerWallet_id], references: [id])
+  amount      Decimal  @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}   
+
+model CustomerBooking {
+  id          String   @id @default(uuid())
+  customer_id String
+  customer    Customer @relation(fields: [customer_id], references: [id])
+  provider_id  String
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
+  status      String   @default("PENDING")  
+  scheduled_at DateTime @default(now()) 
+  completed_at DateTime @default(now())   
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  trackingEvents TrackingEvent[]
+  payments       Payment[]
+  supportTickets SupportTicket[]
+} 
+model TrackingEvent {
+  id          String   @id @default(uuid())
+  customerbooking_id  String
+  customerbooking    CustomerBooking @relation(fields: [customerbooking_id], references: [id])
+  latitude    Float
+  longitude   Float
+  timestamp   DateTime @default(now())    
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}     
+
+model Payment {
+  id          String   @id @default(uuid())
+  customerbooking_id  String
+  customerbooking    CustomerBooking @relation(fields: [customerbooking_id], references: [id])
+  amount      Decimal  @default(0)
+  status      String   @default("PENDING")  
+  method      String   @default("COD")    
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  refunds     Refund[]
+}     
+
+model SupportTicket {
+  id          String   @id @default(uuid())
+  customer_id String
+  customer    Customer @relation(fields: [customer_id], references: [id])
+  customerbooking_id  String
+  customerbooking    CustomerBooking @relation(fields: [customerbooking_id], references: [id])
+  status      String   @default("PENDING")    
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}   
+
+model Refund {
+  id          String   @id @default(uuid())
+  payment_id  String
+  payment    Payment @relation(fields: [payment_id], references: [id])
+  amount      Decimal  @default(0)
+  reason      String  
+  status      String   @default("PENDING")    
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}       
+
