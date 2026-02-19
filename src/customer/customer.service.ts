@@ -56,7 +56,7 @@ export class CustomerService {
     }
 
     async verifyOtp(phoneNumber: string, otp: string) {
-        if (otp !== '123456') throw new BadRequestException('Invalid OTP');
+        if (otp !== '1234') throw new BadRequestException('Invalid OTP');
 
         const user = await this.prisma.user.findUnique({
             where: { phoneNumber },
@@ -133,6 +133,29 @@ export class CustomerService {
         });
     }
 
+    async updateAddress(id: string, addressId: string, dto: AddAddressDto) {
+        const address = await this.prisma.customerAddress.findFirst({
+            where: { id: addressId, customer_id: id },
+        });
+        if (!address) throw new NotFoundException('Address not found');
+
+        return this.prisma.customerAddress.update({
+            where: { id: addressId },
+            data: dto,
+        });
+    }
+
+    async deleteAddress(id: string, addressId: string) {
+        const address = await this.prisma.customerAddress.findFirst({
+            where: { id: addressId, customer_id: id },
+        });
+        if (!address) throw new NotFoundException('Address not found');
+
+        return this.prisma.customerAddress.delete({
+            where: { id: addressId },
+        });
+    }
+
     async deactivateAccount(id: string) {
         return this.prisma.customer.update({
             where: { id },
@@ -142,9 +165,37 @@ export class CustomerService {
 
     // ==================== SERVICE DISCOVERY ====================
 
-    async getCategories() {
+    async getCategories(city?: string) {
+        if (!city) {
+            return this.prisma.serviceCategory.findMany({
+                where: { active: true },
+                include: { items: true },
+            });
+        }
+
+        // Find providers in the city
+        const providers = await this.prisma.serviceProvider.findMany({
+            where: {
+                city,
+                status: 'ONBOARDING_COMPLETED',
+                Kyc_status: 'APPROVED',
+                availabilities: { some: { is_online: true } }
+            },
+            include: { providerProfiles: true }
+        });
+
+        // Collect available services (Category Names) from profiles
+        const availableServiceNames = providers.flatMap(p =>
+            p.providerProfiles.flatMap(pp => pp.services)
+        );
+        const uniqueServices = [...new Set(availableServiceNames)];
+
+        // Return categories matching available services
         return this.prisma.serviceCategory.findMany({
-            where: { active: true },
+            where: {
+                active: true,
+                name: { in: uniqueServices }
+            },
             include: { items: true },
         });
     }

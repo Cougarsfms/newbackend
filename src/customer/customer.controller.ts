@@ -53,6 +53,18 @@ export class CustomerController {
         return this.customerService.getAddresses(id);
     }
 
+    @Put(':id/addresses/:addressId')
+    @ApiOperation({ summary: 'Update address' })
+    async updateAddress(@Param('id') id: string, @Param('addressId') addressId: string, @Body() dto: AddAddressDto) {
+        return this.customerService.updateAddress(id, addressId, dto);
+    }
+
+    @Delete(':id/addresses/:addressId')
+    @ApiOperation({ summary: 'Delete address' })
+    async deleteAddress(@Param('id') id: string, @Param('addressId') addressId: string) {
+        return this.customerService.deleteAddress(id, addressId);
+    }
+
     @Delete(':id/account')
     @ApiOperation({ summary: 'Deactivate account' })
     async deactivateAccount(@Param('id') id: string) {
@@ -63,8 +75,8 @@ export class CustomerController {
 
     @Get('services/categories')
     @ApiOperation({ summary: 'List service categories' })
-    async getCategories() {
-        return this.customerService.getCategories();
+    async getCategories(@Query('city') city?: string) {
+        return this.customerService.getCategories(city);
     }
 
     @Get('services/nearby')

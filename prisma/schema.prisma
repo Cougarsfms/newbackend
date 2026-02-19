@@ -65,6 +65,9 @@ model Booking {
 
   serviceId String
   service   ServiceItem @relation(fields: [serviceId], references: [id])
+  
+  providerId String?
+  provider   ServiceProvider? @relation(fields: [providerId], references: [id])
 
   status BookingStatus @default(PENDING)
   date   DateTime
@@ -75,6 +78,15 @@ model Booking {
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   bookingOverrides BookingOverride[]
+
+  addressId   String?
+  bookingType String @default("Instant")
+  
+  cancellationReason String?
+  cancelledAt        DateTime?
+  
+  paymentStatus      String    @default("PENDING") // PENDING, PAID, REFUNDED
+  payments           Payment[]
 }
 
 model PricingRule {
@@ -155,6 +167,7 @@ model ServiceProvider {
   user              User                @relation(fields: [user_id], references: [id])
   name              String
   phoneNumber       String
+  city              String?
   status            String              @default("PENDING")
   rating            Int                 @default(0)
   Kyc_status        String              @default("PENDING")
@@ -169,6 +182,7 @@ model ServiceProvider {
   locationPings     LocationPing[]
   ratings           Rating[]
   spWallets         SpWallet[]
+  bookings          Booking[]
   customerBookings  CustomerBooking[]
 }
 
@@ -425,8 +439,10 @@ model TrackingEvent {
 
 model Payment {
   id          String   @id @default(uuid())
-  customerbooking_id  String
-  customerbooking    CustomerBooking @relation(fields: [customerbooking_id], references: [id])
+  customerbooking_id  String?
+  customerbooking    CustomerBooking? @relation(fields: [customerbooking_id], references: [id])
+  booking_id         String?
+  booking            Booking?        @relation(fields: [booking_id], references: [id])
   amount      Decimal  @default(0)
   status      String   @default("PENDING")  
   method      String   @default("COD")    
