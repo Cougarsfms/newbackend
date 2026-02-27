@@ -28,6 +28,11 @@ export class BookingsController {
     if (!user) return [];
     return this.bookingsService.getUserBookings(user.id);
   }
+
+  @Get(':id')
+  async getBookingDetails(@Param('id') id: string) {
+    return this.bookingsService.getBookingDetails(id);
+  }
   @Patch(':id/status')
   async updateStatus(
     @Param('id') id: string,

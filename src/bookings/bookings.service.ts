@@ -11,16 +11,57 @@ export class BookingsService {
     const service = await this.prisma.serviceItem.findUnique({ where: { id: serviceId } });
     if (!service) throw new Error('Service not found');
 
-    // 2. Find Available Provider (Simple Logic: First available)
-    const availableProvider = await this.prisma.serviceProvider.findFirst({
-      where: {
-        status: 'ACTIVE',
-        availabilities: {
-          some: { is_online: true }
+    // 2. Find Nearest Eligible Provider
+    let availableProvider: any = null;
+    let customerAddress: any = null;
+
+    if (addressId) {
+      customerAddress = await this.prisma.customerAddress.findUnique({
+        where: { id: addressId },
+      });
+    }
+
+    if (customerAddress) {
+      const providers = await this.prisma.serviceProvider.findMany({
+        where: {
+          status: 'ACTIVE',
+          availabilities: {
+            some: { is_online: true },
+          },
+        },
+        include: { user: true, providerAddresses: true },
+      });
+
+      let minDistance = Infinity;
+
+      for (const provider of providers) {
+        for (const addr of provider.providerAddresses) {
+          const dist = this.calculateDistance(
+            customerAddress.latitude,
+            customerAddress.longitude,
+            addr.latitude,
+            addr.longitude,
+          );
+          if (dist < minDistance) {
+            minDistance = dist;
+            availableProvider = provider;
+          }
         }
-      },
-      include: { user: true } // Fetch name from user? No, provider has name
-    });
+      }
+    }
+
+    // Fallback if no location matched or address missing
+    if (!availableProvider) {
+      availableProvider = await this.prisma.serviceProvider.findFirst({
+        where: {
+          status: 'ACTIVE',
+          availabilities: {
+            some: { is_online: true },
+          },
+        },
+        include: { user: true },
+      });
+    }
 
     let assignedProviderId: string | null = null;
     let initialStatus: BookingStatus = BookingStatus.PENDING;
@@ -31,9 +72,9 @@ export class BookingsService {
       // Mark as CONFIRMED if provider found
       initialStatus = BookingStatus.CONFIRMED;
 
-      // Simulate Notification
-      console.log(`[Notification] To Customer: Your booking is confirmed. Provider ${availableProvider.name} assigned.`);
-      console.log(`[Notification] To Provider ${availableProvider.name}: New booking assigned!`);
+      // Acceptance criteria notifications
+      console.log(`[Notification] To Customer: Your booking has been assigned to provider ${availableProvider.name}.`);
+      console.log(`[Notification] To Provider ${availableProvider.name}: You have been dispatched for a new booking.`);
     } else {
       console.warn('[Algorithm] No available providers found.');
     }
@@ -68,6 +109,18 @@ export class BookingsService {
       },
       orderBy: { createdAt: 'desc' }
     });
+  }
+
+  async getBookingDetails(bookingId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        service: true,
+        provider: true
+      }
+    });
+    if (!booking) throw new Error('Booking not found');
+    return booking;
   }
 
   async updateStatus(bookingId: string, status: BookingStatus) {
@@ -191,5 +244,16 @@ export class BookingsService {
       },
       eta: 15 // Mock ETA
     };
+  }
+
+  private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371; // Radius of the Earth in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in km
   }
 }
