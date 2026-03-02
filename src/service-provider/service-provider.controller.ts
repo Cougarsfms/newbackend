@@ -70,6 +70,12 @@ export class ServiceProviderController {
         return this.providerService.toggleAvailability(id);
     }
 
+    @Get(':id/availability')
+    @ApiOperation({ summary: 'Get current online/offline status' })
+    async getAvailability(@Param('id') id: string) {
+        return this.providerService.getAvailability(id);
+    }
+
     @Get(':id/jobs/nearby')
     @ApiOperation({ summary: 'Get nearby job requests' })
     async getNearbyJobs(@Param('id') id: string) {

@@ -9,4 +9,10 @@ export class UpdateProfileDto {
 
     @ApiProperty({ description: 'Years of Experience', required: false, type: [String] })
     experiences?: string[];
+
+    @ApiProperty({ description: 'City / Location', required: false })
+    city?: string;
+
+    @ApiProperty({ description: 'Years of experience (numeric)', required: false })
+    yearsOfExperience?: number;
 }

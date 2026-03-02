@@ -6,4 +6,7 @@ export class UploadKycDto {
 
     @ApiProperty({ description: 'URL of the uploaded file' })
     fileUrl: string;
+
+    @ApiProperty({ description: 'Aadhaar number (12 digits)', required: false })
+    aadhaarNumber?: string;
 }

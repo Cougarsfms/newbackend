@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterProviderDto } from './dto/register-provider.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -10,7 +11,10 @@ import { Role } from '@prisma/client';
 
 @Injectable()
 export class ServiceProviderService {
-    constructor(private prisma: PrismaService) { }
+    constructor(
+        private prisma: PrismaService,
+        private jwtService: JwtService
+    ) { }
 
     // ==================== ONBOARDING & AUTHENTICATION ====================
 
@@ -80,22 +84,63 @@ export class ServiceProviderService {
 
     async verifyOtp(phoneNumber: string, otp: string) {
         // Mock OTP verification
-        if (otp !== '123456') {
+        if (otp !== '1234') {
             throw new BadRequestException('Invalid OTP');
         }
 
-        const user = await this.prisma.user.findUnique({
+        let user = await this.prisma.user.findUnique({
             where: { phoneNumber },
             include: { serviceProviders: true },
         });
 
+        if (!user) {
+            user = await this.prisma.user.create({
+                data: {
+                    phoneNumber,
+                    name: 'Provider ' + phoneNumber.slice(-4),
+                    role: Role.PROVIDER,
+                    status: 'PENDING',
+                    serviceProviders: {
+                        create: {
+                            name: 'Provider ' + phoneNumber.slice(-4),
+                            phoneNumber,
+                            status: 'PENDING',
+                        }
+                    }
+                },
+                include: { serviceProviders: true }
+            });
+
+            const provider = user.serviceProviders[0];
+            await this.prisma.providerProfile.create({
+                data: { provider_id: provider.id, services: [], experiences: [] },
+            });
+            await this.prisma.spWallet.create({
+                data: { provider_id: provider.id, balance: 0 },
+            });
+            await this.prisma.availability.create({
+                data: { provider_id: provider.id, is_online: false },
+            });
+        }
+
         if (!user) throw new NotFoundException('User not found');
 
-        // Generate JWT token here (mocked)
+        const providerId = user.serviceProviders[0]?.id;
+        // Generate JWT token
+        const payload = {
+            sub: user.id,
+            phoneNumber: user.phoneNumber,
+            role: user.role,
+            providerId: providerId,
+        };
+
+        const token = this.jwtService.sign(payload);
+
         return {
             message: 'Login successful',
-            token: 'mock-jwt-token',
-            providerId: user.serviceProviders[0]?.id,
+            token,
+            providerId,
+            user,
         };
     }
 
@@ -120,15 +165,20 @@ export class ServiceProviderService {
 
         if (!provider) throw new NotFoundException('Provider not found');
 
-        // Update basic info
-        if (dto.name) {
+        // Update basic info on the provider record
+        const providerData: any = {};
+        if (dto.name) providerData.name = dto.name;
+        if (dto.city !== undefined) providerData.city = dto.city;
+        if (dto.yearsOfExperience !== undefined) providerData.yearsOfExperience = dto.yearsOfExperience;
+
+        if (Object.keys(providerData).length > 0) {
             await this.prisma.serviceProvider.update({
                 where: { id },
-                data: { name: dto.name },
+                data: providerData,
             });
         }
 
-        // Update profile details
+        // Update profile details (services & experiences)
         if (dto.serviceCategories || dto.experiences) {
             const profileId = provider.providerProfiles[0]?.id;
             if (profileId) {
@@ -144,6 +194,7 @@ export class ServiceProviderService {
 
         return this.getProfile(id);
     }
+
 
     async completeOnboarding(id: string) {
         // Check if all necessary details are filled
@@ -164,7 +215,7 @@ export class ServiceProviderService {
         const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
         if (!provider) throw new NotFoundException('Provider not found');
 
-        // Check/Create KYC Record for user
+        // 1. Find or create KYC Record — always set status to PENDING on new submission
         let kycRecord = await this.prisma.kYCRecord.findFirst({
             where: { user_id: provider.user_id },
         });
@@ -176,9 +227,15 @@ export class ServiceProviderService {
                     status: 'PENDING',
                 },
             });
+        } else {
+            // Reset to PENDING if re-submitting after a rejection
+            await this.prisma.kYCRecord.update({
+                where: { id: kycRecord.id },
+                data: { status: 'PENDING' },
+            });
         }
 
-        // Create Document
+        // 2. Save the uploaded document
         await this.prisma.kYCDocument.create({
             data: {
                 kyc_id: kycRecord.id,
@@ -187,47 +244,117 @@ export class ServiceProviderService {
             },
         });
 
-        // Update Provider KYC Status
+        // 3. Mark provider KYC status as SUBMITTED
         await this.prisma.serviceProvider.update({
             where: { id },
             data: { Kyc_status: 'SUBMITTED' },
         });
 
-        return { message: 'KYC document uploaded successfully' };
+        // 4. Create AdminNotification so the admin panel can surface this immediately
+        try {
+            await this.prisma.adminNotification.create({
+                data: {
+                    type: 'KYC_SUBMITTED',
+                    title: 'New KYC Submission',
+                    body: `Provider ${provider.name} (${provider.phoneNumber}) submitted a ${dto.documentType} document for review.`,
+                    entityId: kycRecord.id,
+                },
+            });
+        } catch (e) {
+            // Non-critical — log but don't fail the upload
+            console.error('[KYC] AdminNotification creation failed:', e);
+        }
+
+        console.log(`[KYC] New submission from provider ${id} (${provider.name}), kycRecordId: ${kycRecord.id}`);
+
+        return {
+            message: 'KYC document uploaded successfully',
+            kycRecordId: kycRecord.id,
+            status: 'PENDING',
+        };
     }
+
 
     async getKycStatus(id: string) {
         const provider = await this.prisma.serviceProvider.findUnique({
             where: { id },
-            select: { Kyc_status: true },
+            select: { Kyc_status: true, status: true, name: true },
         });
         if (!provider) throw new NotFoundException('Provider not found');
-        return { status: provider.Kyc_status };
+
+        const kycRecord = await this.prisma.kYCRecord.findFirst({
+            where: {
+                user: { serviceProviders: { some: { id } } },
+            },
+            include: { kycdocuments: true },
+            orderBy: { updatedAt: 'desc' },
+        });
+
+        return {
+            kycStatus: provider.Kyc_status,
+            providerStatus: provider.status,
+            kycRecord: kycRecord
+                ? {
+                    id: kycRecord.id,
+                    status: kycRecord.status,
+                    remarks: kycRecord.remarks ?? null,
+                    updatedAt: kycRecord.updatedAt,
+                    createdAt: kycRecord.createdAt,
+                }
+                : null,
+            documents: kycRecord?.kycdocuments.map((d) => ({
+                id: d.id,
+                documentType: d.document_type,
+                fileUrl: d.file_url,
+                createdAt: d.createdAt,
+            })) ?? [],
+        };
     }
 
     // ==================== AVAILABILITY & JOB ACCEPTANCE ====================
 
     async toggleAvailability(id: string) {
+        const now = new Date();
+        let availability = await this.prisma.availability.findFirst({
+            where: { provider_id: id },
+        });
+
+        if (!availability) {
+            availability = await this.prisma.availability.create({
+                data: { provider_id: id, is_online: true, last_seen: now },
+            });
+            return { is_online: true, last_seen: now };
+        }
+
+        const newStatus = !availability.is_online;
+        const updated = await this.prisma.availability.update({
+            where: { id: availability.id },
+            data: { is_online: newStatus, last_seen: now },
+        });
+
+        return { is_online: updated.is_online, last_seen: updated.last_seen };
+    }
+
+    async getAvailability(id: string) {
+        const availability = await this.prisma.availability.findFirst({
+            where: { provider_id: id },
+        });
+        if (!availability) {
+            return { is_online: false, last_seen: null };
+        }
+        return { is_online: availability.is_online, last_seen: availability.last_seen };
+    }
+
+    async getNearbyJobs(id: string) {
+        // Only show jobs when the provider is online
         const availability = await this.prisma.availability.findFirst({
             where: { provider_id: id },
         });
 
-        if (!availability) throw new NotFoundException('Availability record not found');
+        if (!availability?.is_online) {
+            return []; // Offline providers do not receive jobs
+        }
 
-        const newStatus = !availability.is_online;
-        await this.prisma.availability.update({
-            where: { id: availability.id },
-            data: {
-                is_online: newStatus,
-                last_seen: new Date(),
-            },
-        });
-
-        return { is_online: newStatus };
-    }
-
-    async getNearbyJobs(id: string) {
-        // Mock logic: return pending bookings in the system
         return this.prisma.spBooking.findMany({
             where: { status: 'PENDING' },
         });

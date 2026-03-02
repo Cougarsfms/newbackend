@@ -120,7 +120,10 @@ export class AdminService {
 
         const updatedKyc = await this.prisma.kYCRecord.update({
             where: { id },
-            data: { status },
+            data: {
+                status,
+                remarks: remarks ?? null,
+            },
         });
 
         // Create Audit Log (FR-KYC-003)
@@ -393,4 +396,21 @@ export class AdminService {
             totalRevenue: totalRevenue._sum.totalAmount || 0,
         };
     }
+
+    // FR-KYC NOTIFY: Get admin notifications (unread first)
+    async getNotifications(onlyUnread = true) {
+        return this.prisma.adminNotification.findMany({
+            where: onlyUnread ? { isRead: false } : undefined,
+            orderBy: { createdAt: 'desc' },
+        });
+    }
+
+    // Mark a notification as read
+    async markNotificationRead(id: string) {
+        return this.prisma.adminNotification.update({
+            where: { id },
+            data: { isRead: true },
+        });
+    }
 }
+

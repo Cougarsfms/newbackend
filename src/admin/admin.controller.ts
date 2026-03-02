@@ -329,4 +329,31 @@ export class AdminController {
     async getRevenueAnalytics() {
         return this.adminService.getRevenueAnalytics();
     }
+
+    // ==================== NOTIFICATIONS ====================
+
+    @Get('notifications')
+    @ApiOperation({
+        summary: 'Get admin notifications',
+        description: 'Retrieve unread admin notifications (e.g. new KYC submissions)',
+        tags: ['Notifications'],
+    })
+    @ApiQuery({ name: 'all', required: false, description: 'Pass "true" to include already-read notifications' })
+    @ApiResponse({ status: 200, description: 'Notifications retrieved successfully' })
+    async getNotifications(@Query('all') all?: string) {
+        return this.adminService.getNotifications(all !== 'true');
+    }
+
+    @Patch('notifications/:id/read')
+    @ApiOperation({
+        summary: 'Mark notification as read',
+        description: 'Mark a specific admin notification as read',
+        tags: ['Notifications'],
+    })
+    @ApiParam({ name: 'id', description: 'Notification ID' })
+    @ApiResponse({ status: 200, description: 'Notification marked as read' })
+    async markNotificationRead(@Param('id') id: string) {
+        return this.adminService.markNotificationRead(id);
+    }
 }
+

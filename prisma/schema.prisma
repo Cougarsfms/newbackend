@@ -137,6 +137,7 @@ model KYCRecord {
   user_id      String
   user         User          @relation(fields: [user_id], references: [id])
   status       String        @default("PENDING")
+  remarks      String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   kycdocuments KYCDocument[]
@@ -168,6 +169,7 @@ model ServiceProvider {
   name               String
   phoneNumber        String
   city               String?
+  yearsOfExperience  Int?                @default(0)
   status             String              @default("PENDING")
   rating             Int                 @default(0)
   Kyc_status         String              @default("PENDING")
@@ -489,4 +491,14 @@ model ProviderAddress {
   label       String // e.g., "Home", "Office"
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
+}
+
+model AdminNotification {
+  id        String   @id @default(uuid())
+  type      String   // e.g. "KYC_SUBMITTED"
+  title     String
+  body      String
+  entityId  String   // KYCRecord ID or providerId
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
 }
