@@ -152,6 +152,12 @@ export class ServiceProviderController {
         return this.providerService.getRatings(id);
     }
 
+    @Get(':id/performance')
+    @ApiOperation({ summary: 'Get performance metrics including rating and rates' })
+    async getPerformance(@Param('id') id: string) {
+        return this.providerService.getPerformance(id);
+    }
+
     @Post(':id/support')
     @ApiOperation({ summary: 'Raise support ticket' })
     async raiseSupportTicket(
@@ -159,5 +165,37 @@ export class ServiceProviderController {
         @Body() body: { subject: string; message: string },
     ) {
         return this.providerService.raiseSupportTicket(id, body.subject, body.message);
+    }
+
+    // ==================== ADDRESS MANAGEMENT ====================
+
+    @Get(':id/addresses')
+    @ApiOperation({ summary: 'Get all saved addresses for a provider' })
+    async getAddresses(@Param('id') id: string) {
+        return this.providerService.getAddresses(id);
+    }
+
+    @Post(':id/addresses')
+    @ApiOperation({ summary: 'Add a new address for a provider' })
+    async addAddress(
+        @Param('id') id: string,
+        @Body() body: {
+            address: string;
+            city: string;
+            state: string;
+            country: string;
+            zipcode: string;
+            label: string;
+            latitude?: number;
+            longitude?: number;
+        },
+    ) {
+        return this.providerService.addAddress(id, body);
+    }
+
+    @Post(':id/addresses/:addressId/delete')
+    @ApiOperation({ summary: 'Delete a saved address' })
+    async deleteAddress(@Param('id') id: string, @Param('addressId') addressId: string) {
+        return this.providerService.deleteAddress(id, addressId);
     }
 }

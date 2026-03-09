@@ -313,15 +313,29 @@ export class ServiceProviderService {
 
     // ==================== AVAILABILITY & JOB ACCEPTANCE ====================
 
+    /** Resolve the canonical ServiceProvider.id from either a provider_id or a user_id */
+    private async resolveProviderId(id: string): Promise<string | null> {
+        // Try direct provider lookup first
+        const byProvider = await this.prisma.serviceProvider.findUnique({ where: { id } });
+        if (byProvider) return byProvider.id;
+        // Fall back: maybe a user_id was passed (old client sessions)
+        const byUser = await this.prisma.serviceProvider.findFirst({ where: { user_id: id } });
+        return byUser?.id ?? null;
+    }
+
     async toggleAvailability(id: string) {
         const now = new Date();
+        const providerId = await this.resolveProviderId(id);
+        if (!providerId) throw new NotFoundException('Provider not found');
+
         let availability = await this.prisma.availability.findFirst({
-            where: { provider_id: id },
+            where: { provider_id: providerId },
         });
 
         if (!availability) {
+            // First toggle: create record and go online
             availability = await this.prisma.availability.create({
-                data: { provider_id: id, is_online: true, last_seen: now },
+                data: { provider_id: providerId, is_online: true, last_seen: now },
             });
             return { is_online: true, last_seen: now };
         }
@@ -336,13 +350,16 @@ export class ServiceProviderService {
     }
 
     async getAvailability(id: string) {
+        const providerId = await this.resolveProviderId(id);
+        if (!providerId) return { is_online: false, last_seen: null };
+
         const availability = await this.prisma.availability.findFirst({
-            where: { provider_id: id },
+            where: { provider_id: providerId },
         });
-        if (!availability) {
-            return { is_online: false, last_seen: null };
-        }
-        return { is_online: availability.is_online, last_seen: availability.last_seen };
+        return {
+            is_online: availability?.is_online ?? false,
+            last_seen: availability?.last_seen ?? null,
+        };
     }
 
     async getNearbyJobs(id: string) {
@@ -355,8 +372,12 @@ export class ServiceProviderService {
             return []; // Offline providers do not receive jobs
         }
 
+        // Return only jobs explicitly assigned to this provider by the mapping algorithm
         return this.prisma.spBooking.findMany({
-            where: { status: 'PENDING' },
+            where: {
+                status: 'PENDING',
+                provider_id: id
+            },
         });
     }
 
@@ -408,26 +429,38 @@ export class ServiceProviderService {
     }
 
     async completeJob(id: string, jobId: string) {
+        const now = new Date();
         const job = await this.prisma.spBooking.update({
             where: { id: jobId },
-            data: {
-                status: 'COMPLETED',
-                end_time: new Date(),
-            },
+            data: { status: 'COMPLETED', end_time: now },
         });
 
-        // Calculate earnings and update wallet (simplified)
-        const amount = 500; // Mock amount
-        const wallet = await this.prisma.spWallet.findFirst({ where: { provider_id: id } });
+        // Duration-based earnings: base ₹350 + ₹50 per extra hour
+        const durationMs = now.getTime() - (job.start_time?.getTime() ?? now.getTime());
+        const durationMinutes = Math.max(0, Math.round(durationMs / 60000));
+        const earnings = 350 + Math.floor(durationMinutes / 60) * 50;
 
+        // Credit wallet
+        const wallet = await this.prisma.spWallet.findFirst({ where: { provider_id: id } });
         if (wallet) {
             await this.prisma.spWallet.update({
                 where: { id: wallet.id },
-                data: { balance: { increment: amount } },
+                data: { balance: { increment: earnings } },
             });
         }
 
-        return job;
+        // Log job completion as a notification (customer notification proxy)
+        try {
+            await (this.prisma as any).adminNotification.create({
+                data: {
+                    type: 'JOB_COMPLETED',
+                    message: `Job ${jobId} completed by provider ${id}. Earnings: ₹${earnings}. Duration: ${durationMinutes} min.`,
+                    is_read: false,
+                },
+            });
+        } catch (_) { /* AdminNotification model may not be migrated yet */ }
+
+        return { ...job, earnings, durationMinutes };
     }
 
     async updateLocation(id: string, dto: LocationUpdateDto) {
@@ -506,5 +539,54 @@ export class ServiceProviderService {
     async raiseSupportTicket(id: string, subject: string, message: string) {
         // Mock support ticket creation
         return { message: 'Support ticket created', ticketId: 'TICK-123' };
+    }
+
+    // ==================== ADDRESS MANAGEMENT ====================
+
+    async getAddresses(id: string) {
+        const providerId = await this.resolveProviderId(id);
+        if (!providerId) throw new NotFoundException('Provider not found');
+        return this.prisma.providerAddress.findMany({
+            where: { provider_id: providerId },
+            orderBy: { createdAt: 'desc' },
+        });
+    }
+
+    async addAddress(id: string, dto: {
+        address: string;
+        city: string;
+        state: string;
+        country: string;
+        zipcode: string;
+        label: string;
+        latitude?: number;
+        longitude?: number;
+    }) {
+        const providerId = await this.resolveProviderId(id);
+        if (!providerId) throw new NotFoundException('Provider not found');
+        return this.prisma.providerAddress.create({
+            data: {
+                provider_id: providerId,
+                address: dto.address,
+                city: dto.city,
+                state: dto.state,
+                country: dto.country,
+                zipcode: dto.zipcode,
+                label: dto.label,
+                latitude: dto.latitude ?? 0,
+                longitude: dto.longitude ?? 0,
+            },
+        });
+    }
+
+    async deleteAddress(id: string, addressId: string) {
+        const providerId = await this.resolveProviderId(id);
+        if (!providerId) throw new NotFoundException('Provider not found');
+        const record = await this.prisma.providerAddress.findFirst({
+            where: { id: addressId, provider_id: providerId },
+        });
+        if (!record) throw new NotFoundException('Address not found');
+        await this.prisma.providerAddress.delete({ where: { id: addressId } });
+        return { message: 'Address deleted' };
     }
 }
