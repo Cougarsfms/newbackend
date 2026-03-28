@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Patch, Param, Body, Post } from '@nestjs/common';
+import { Controller, Get, Query, Patch, Param, Body, Post, Delete } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { Role } from '@prisma/client';
 import { ApiTags, ApiOperation, ApiQuery, ApiParam, ApiBody, ApiResponse } from '@nestjs/swagger';
@@ -9,6 +9,7 @@ import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { CreatePricingRuleDto } from './dto/create-pricing-rule.dto';
 import { CreateSurgeRuleDto } from './dto/create-surge-rule.dto';
 import { BookingStatus } from '@prisma/client';
+import { CreateServiceProviderDto } from './dto/create-service-provider.dto';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -130,12 +131,18 @@ export class AdminController {
     })
     @ApiQuery({ name: 'status', required: false, enum: BookingStatus, description: 'Filter by booking status' })
     @ApiQuery({ name: 'userId', required: false, description: 'Filter by user ID' })
+    @ApiQuery({ name: 'limit', required: false, description: 'Limit number of results' })
+    @ApiQuery({ name: 'page', required: false, description: 'Page number' })
     @ApiResponse({ status: 200, description: 'Bookings retrieved successfully' })
     async getBookings(
         @Query('status') status?: BookingStatus,
         @Query('userId') userId?: string,
+        @Query('limit') limit?: string,
+        @Query('page') page?: string,
     ) {
-        return this.adminService.getBookings({ status, userId });
+        const take = limit ? parseInt(limit, 10) : undefined;
+        const skip = page && take ? (parseInt(page, 10) - 1) * take : undefined;
+        return this.adminService.getBookings({ status, userId, take, skip });
     }
 
     // FR-BKG-001
@@ -187,6 +194,28 @@ export class AdminController {
         return this.adminService.createPricingRule(body);
     }
 
+    @Patch('pricing-rules/:id')
+    @ApiOperation({
+        summary: 'Update pricing rule',
+        description: 'Update an existing pricing rule',
+        tags: ['Pricing & Commission'],
+    })
+    @ApiResponse({ status: 200, description: 'Pricing rule updated successfully' })
+    async updatePricingRule(@Param('id') id: string, @Body() body: Partial<CreatePricingRuleDto>) {
+        return this.adminService.updatePricingRule(id, body);
+    }
+
+    @Delete('pricing-rules/:id')
+    @ApiOperation({
+        summary: 'Delete pricing rule',
+        description: 'Delete an existing pricing rule by ID',
+        tags: ['Pricing & Commission'],
+    })
+    @ApiResponse({ status: 200, description: 'Pricing rule deleted successfully' })
+    async deletePricingRule(@Param('id') id: string) {
+        return this.adminService.deletePricingRule(id);
+    }
+
     // FR-PRC-001
     @Get('pricing-rules')
     @ApiOperation({
@@ -212,6 +241,28 @@ export class AdminController {
     @ApiResponse({ status: 400, description: 'Invalid input data' })
     async createSurgeRule(@Body() body: CreateSurgeRuleDto) {
         return this.adminService.createSurgeRule(body);
+    }
+
+    @Patch('surge-rules/:id')
+    @ApiOperation({
+        summary: 'Update surge rule',
+        description: 'Update an existing surge pricing rule',
+        tags: ['Pricing & Commission'],
+    })
+    @ApiResponse({ status: 200, description: 'Surge rule updated successfully' })
+    async updateSurgeRule(@Param('id') id: string, @Body() body: Partial<CreateSurgeRuleDto>) {
+        return this.adminService.updateSurgeRule(id, body);
+    }
+
+    @Delete('surge-rules/:id')
+    @ApiOperation({
+        summary: 'Delete surge rule',
+        description: 'Delete an existing surge pricing rule by ID',
+        tags: ['Pricing & Commission'],
+    })
+    @ApiResponse({ status: 200, description: 'Surge rule deleted successfully' })
+    async deleteSurgeRule(@Param('id') id: string) {
+        return this.adminService.deleteSurgeRule(id);
     }
 
     // FR-PRC-002
@@ -354,6 +405,100 @@ export class AdminController {
     @ApiResponse({ status: 200, description: 'Notification marked as read' })
     async markNotificationRead(@Param('id') id: string) {
         return this.adminService.markNotificationRead(id);
+    }
+
+    // ==================== SERVICE PROVIDER MANAGEMENT ====================
+
+    @Get('service-providers')
+    @ApiOperation({
+        summary: 'Get all service providers',
+        description: 'Retrieve service providers with optional filters',
+        tags: ['Service Provider Management'],
+    })
+    @ApiQuery({ name: 'name', required: false, description: 'Filter by name' })
+    @ApiQuery({ name: 'city', required: false, description: 'Filter by city' })
+    @ApiQuery({ name: 'status', required: false, description: 'Filter by status' })
+    @ApiResponse({ status: 200, description: 'Service providers retrieved successfully' })
+    async getServiceProviders(
+        @Query('name') name?: string,
+        @Query('city') city?: string,
+        @Query('status') status?: string,
+    ) {
+        return this.adminService.getServiceProviders({ name, city, status });
+    }
+
+    @Get('service-providers/:id')
+    @ApiOperation({
+        summary: 'Get service provider by ID',
+        description: 'Retrieve a single service provider with full details',
+        tags: ['Service Provider Management'],
+    })
+    @ApiParam({ name: 'id', description: 'Service Provider ID' })
+    @ApiResponse({ status: 200, description: 'Service provider retrieved successfully' })
+    @ApiResponse({ status: 404, description: 'Service provider not found' })
+    async getServiceProviderById(@Param('id') id: string) {
+        return this.adminService.getServiceProviderById(id);
+    }
+
+    @Post('service-providers')
+    @ApiOperation({
+        summary: 'Create service provider',
+        description: 'Create a new service provider linked to an existing user',
+        tags: ['Service Provider Management'],
+    })
+    @ApiBody({ type: CreateServiceProviderDto })
+    @ApiResponse({ status: 201, description: 'Service provider created successfully' })
+    @ApiResponse({ status: 400, description: 'Invalid input' })
+    @ApiResponse({ status: 404, description: 'User not found' })
+    async createServiceProvider(@Body() body: CreateServiceProviderDto) {
+        return this.adminService.createServiceProvider(body);
+    }
+
+    @Patch('service-providers/:id')
+    @ApiOperation({
+        summary: 'Update service provider',
+        description: 'Update an existing service provider record',
+        tags: ['Service Provider Management'],
+    })
+    @ApiParam({ name: 'id', description: 'Service Provider ID' })
+    @ApiBody({ type: CreateServiceProviderDto })
+    @ApiResponse({ status: 200, description: 'Service provider updated successfully' })
+    @ApiResponse({ status: 404, description: 'Service provider not found' })
+    async updateServiceProvider(
+        @Param('id') id: string,
+        @Body() body: Partial<CreateServiceProviderDto>,
+    ) {
+        return this.adminService.updateServiceProvider(id, body);
+    }
+
+    @Patch('service-providers/:id/status')
+    @ApiOperation({
+        summary: 'Update service provider status',
+        description: 'Activate, suspend or reject a service provider',
+        tags: ['Service Provider Management'],
+    })
+    @ApiParam({ name: 'id', description: 'Service Provider ID' })
+    @ApiResponse({ status: 200, description: 'Status updated successfully' })
+    @ApiResponse({ status: 404, description: 'Service provider not found' })
+    async updateServiceProviderStatus(
+        @Param('id') id: string,
+        @Body('status') status: string,
+    ) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.updateServiceProviderStatus(id, status, adminId);
+    }
+
+    @Delete('service-providers/:id')
+    @ApiOperation({
+        summary: 'Delete service provider',
+        description: 'Permanently delete a service provider record',
+        tags: ['Service Provider Management'],
+    })
+    @ApiParam({ name: 'id', description: 'Service Provider ID' })
+    @ApiResponse({ status: 200, description: 'Service provider deleted successfully' })
+    @ApiResponse({ status: 404, description: 'Service provider not found' })
+    async deleteServiceProvider(@Param('id') id: string) {
+        return this.adminService.deleteServiceProvider(id);
     }
 }
 

@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { User, Prisma, Role, BookingStatus, Booking } from '@prisma/client';
 import { CreatePricingRuleDto } from './dto/create-pricing-rule.dto';
 import { CreateSurgeRuleDto } from './dto/create-surge-rule.dto';
+import { CreateServiceProviderDto } from './dto/create-service-provider.dto';
 
 @Injectable()
 export class AdminService {
@@ -143,8 +144,8 @@ export class AdminService {
     }
 
     // FR-BKG-001: View Bookings
-    async getBookings(params: { status?: BookingStatus; userId?: string }) {
-        const { status, userId } = params;
+    async getBookings(params: { status?: BookingStatus; userId?: string; take?: number; skip?: number }) {
+        const { status, userId, take, skip } = params;
         return this.prisma.booking.findMany({
             where: {
                 status: status ? status : undefined,
@@ -153,8 +154,11 @@ export class AdminService {
             include: {
                 user: true,
                 service: true,
+                provider: true,
             },
             orderBy: { createdAt: 'desc' },
+            take,
+            skip,
         });
     }
 
@@ -226,6 +230,21 @@ export class AdminService {
         });
     }
 
+    async updatePricingRule(id: string, data: Partial<CreatePricingRuleDto>) {
+        return this.prisma.pricingRule.update({
+            where: { id },
+            data: {
+                ...data,
+            },
+        });
+    }
+
+    async deletePricingRule(id: string) {
+        return this.prisma.pricingRule.delete({
+            where: { id },
+        });
+    }
+
     // FR-PRC-001: Get Pricing Rules
     async getPricingRules(city?: string) {
         return this.prisma.pricingRule.findMany({
@@ -243,6 +262,24 @@ export class AdminService {
                 multiplier: data.multiplier,
                 condition: data.condition,
             },
+        });
+    }
+
+    async updateSurgeRule(id: string, data: Partial<CreateSurgeRuleDto>) {
+        const updateData: any = {};
+        if (data.pricingRuleId) updateData.PricingRuleid = data.pricingRuleId;
+        if (data.multiplier !== undefined) updateData.multiplier = data.multiplier;
+        if (data.condition !== undefined) updateData.condition = data.condition;
+
+        return this.prisma.surgeRule.update({
+            where: { id },
+            data: updateData,
+        });
+    }
+
+    async deleteSurgeRule(id: string) {
+        return this.prisma.surgeRule.delete({
+            where: { id },
         });
     }
 
@@ -304,26 +341,53 @@ export class AdminService {
 
     // FR-ANA-001: Dashboard Statistics
     async getDashboardStats() {
-        const totalUsers = await this.prisma.user.count();
-        const totalBookings = await this.prisma.booking.count();
-        const totalRevenue = await this.prisma.booking.aggregate({
+        const now = new Date();
+        const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+        // Current Month Data
+        const currentMonthUsers = await this.prisma.user.count({ where: { createdAt: { gte: startOfCurrentMonth } } });
+        const currentMonthBookings = await this.prisma.booking.count({ where: { createdAt: { gte: startOfCurrentMonth } } });
+        const currentMonthRevenueAgg = await this.prisma.booking.aggregate({
             _sum: { totalAmount: true },
+            where: { createdAt: { gte: startOfCurrentMonth }, status: 'COMPLETED' },
         });
+        const currentMonthRevenue = Number(currentMonthRevenueAgg._sum.totalAmount || 0);
 
-        const activeUsers = await this.prisma.user.count({
-            where: { status: 'ACTIVE' },
+        // Last Month Data
+        const lastMonthUsers = await this.prisma.user.count({ where: { createdAt: { gte: startOfLastMonth, lt: startOfCurrentMonth } } });
+        const lastMonthBookings = await this.prisma.booking.count({ where: { createdAt: { gte: startOfLastMonth, lt: startOfCurrentMonth } } });
+        const lastMonthRevenueAgg = await this.prisma.booking.aggregate({
+            _sum: { totalAmount: true },
+            where: { createdAt: { gte: startOfLastMonth, lt: startOfCurrentMonth }, status: 'COMPLETED' },
         });
+        const lastMonthRevenue = Number(lastMonthRevenueAgg._sum.totalAmount || 0);
 
-        const pendingBookings = await this.prisma.booking.count({
-            where: { status: 'PENDING' },
-        });
+        // Global Overalls
+        const totalUsers = await this.prisma.user.count();
+        const activeUsers = await this.prisma.user.count({ where: { status: 'ACTIVE' } });
+        const totalBookings = await this.prisma.booking.count();
+        const totalRevenueAgg = await this.prisma.booking.aggregate({ _sum: { totalAmount: true }, where: { status: 'COMPLETED' } });
+        const totalRevenue = Number(totalRevenueAgg._sum.totalAmount || 0);
+        const pendingBookings = await this.prisma.booking.count({ where: { status: 'PENDING' } });
+        const pendingKYC = await this.prisma.kYCRecord.count({ where: { status: 'PENDING' } });
+
+        // Growth metrics (percentage change)
+        const calcGrowth = (current: number, previous: number) => {
+            if (previous === 0) return current > 0 ? 100 : 0;
+            return Math.round(((current - previous) / previous) * 100);
+        };
 
         return {
             totalUsers,
             activeUsers,
             totalBookings,
             pendingBookings,
-            totalRevenue: totalRevenue._sum.totalAmount || 0,
+            totalRevenue,
+            pendingKYC,
+            usersGrowth: calcGrowth(currentMonthUsers, lastMonthUsers),
+            bookingsGrowth: calcGrowth(currentMonthBookings, lastMonthBookings),
+            revenueGrowth: calcGrowth(currentMonthRevenue, lastMonthRevenue),
         };
     }
 
@@ -377,24 +441,40 @@ export class AdminService {
 
     // FR-ANA-004: Revenue Analytics
     async getRevenueAnalytics() {
-        const revenueByCity = await this.prisma.booking.groupBy({
-            by: ['city'],
-            _sum: { totalAmount: true },
-            _count: { id: true },
+        // Return timeseries array for the last 7 days (used by the dashboard chart)
+        const last7Days = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            d.setHours(0, 0, 0, 0);
+            return d;
+        }).reverse();
+
+        const startDate = last7Days[0];
+
+        const recentBookings = await this.prisma.booking.findMany({
+            where: {
+                createdAt: { gte: startDate },
+                status: 'COMPLETED'
+            },
+            select: {
+                createdAt: true,
+                totalAmount: true,
+            },
         });
 
-        const totalRevenue = await this.prisma.booking.aggregate({
-            _sum: { totalAmount: true },
-        });
+        // Map into array of { period, bookings, revenue } expected by dashboard UI
+        return last7Days.map(date => {
+            const nextDay = new Date(date);
+            nextDay.setDate(nextDay.getDate() + 1);
 
-        return {
-            byCity: revenueByCity.map(item => ({
-                city: item.city,
-                revenue: item._sum.totalAmount || 0,
-                bookingCount: item._count.id,
-            })),
-            totalRevenue: totalRevenue._sum.totalAmount || 0,
-        };
+            const dayBookings = recentBookings.filter(b => b.createdAt >= date && b.createdAt < nextDay);
+            
+            return {
+                period: date.toISOString(),
+                bookings: dayBookings.length,
+                revenue: dayBookings.reduce((sum, b) => sum + Number(b.totalAmount || 0), 0),
+            };
+        });
     }
 
     // FR-KYC NOTIFY: Get admin notifications (unread first)
@@ -411,6 +491,95 @@ export class AdminService {
             where: { id },
             data: { isRead: true },
         });
+    }
+
+    // ==================== SERVICE PROVIDERS ====================
+
+    async getServiceProviders(params: { name?: string; city?: string; status?: string }) {
+        const { name, city, status } = params;
+        return this.prisma.serviceProvider.findMany({
+            where: {
+                name: name ? { contains: name, mode: 'insensitive' } : undefined,
+                city: city ? { contains: city, mode: 'insensitive' } : undefined,
+                status: status ? status : undefined,
+            },
+            include: { user: true, providerProfiles: true },
+            orderBy: { createdAt: 'desc' },
+        });
+    }
+
+    async getServiceProviderById(id: string) {
+        const provider = await this.prisma.serviceProvider.findUnique({
+            where: { id },
+            include: { user: true, providerProfiles: true, availabilities: true },
+        });
+        if (!provider) throw new NotFoundException('Service provider not found');
+        return provider;
+    }
+
+    async createServiceProvider(data: CreateServiceProviderDto) {
+        // Verify user exists
+        const user = await this.prisma.user.findUnique({ where: { id: data.user_id } });
+        if (!user) throw new NotFoundException(`User with id ${data.user_id} not found`);
+
+        return this.prisma.serviceProvider.create({
+            data: {
+                user_id: data.user_id,
+                name: data.name,
+                phoneNumber: data.phoneNumber,
+                city: data.city,
+                yearsOfExperience: data.yearsOfExperience ?? 0,
+                status: data.status ?? 'PENDING',
+            },
+            include: { user: true },
+        });
+    }
+
+    async updateServiceProvider(id: string, data: Partial<CreateServiceProviderDto>) {
+        const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
+        if (!provider) throw new NotFoundException('Service provider not found');
+
+        return this.prisma.serviceProvider.update({
+            where: { id },
+            data: {
+                name: data.name,
+                phoneNumber: data.phoneNumber,
+                city: data.city,
+                yearsOfExperience: data.yearsOfExperience,
+                status: data.status,
+            },
+            include: { user: true },
+        });
+    }
+
+    async updateServiceProviderStatus(id: string, status: string, adminId: string) {
+        const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
+        if (!provider) throw new NotFoundException('Service provider not found');
+
+        const updated = await this.prisma.serviceProvider.update({
+            where: { id },
+            data: { status },
+        });
+
+        try {
+            await this.prisma.auditLog.create({
+                data: {
+                    admin_id: adminId,
+                    action: `PROVIDER_STATUS_UPDATE_${status}`,
+                    details: `Provider ${id} status changed to ${status}`,
+                },
+            });
+        } catch (e) {
+            console.error('Audit log creation failed:', e);
+        }
+
+        return updated;
+    }
+
+    async deleteServiceProvider(id: string) {
+        const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
+        if (!provider) throw new NotFoundException('Service provider not found');
+        return this.prisma.serviceProvider.delete({ where: { id } });
     }
 }
 

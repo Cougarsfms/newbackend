@@ -111,16 +111,18 @@ model AdminRole {
 }
 
 model AdminUser {
-  id          String     @id @default(uuid())
-  name        String?
-  role_id     String
-  role        AdminRole  @relation(fields: [role_id], references: [id])
-  email       String?    @unique
-  phoneNumber String     @unique
-  status      String     @default("ACTIVE")
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  auditLogs   AuditLog[]
+  id           String     @id @default(uuid())
+  name         String?
+  role_id      String
+  role         AdminRole  @relation(fields: [role_id], references: [id])
+  email        String?    @unique
+  phoneNumber  String?    @unique
+  passwordHash String?
+  adminRole    String     @default("SUPER_ADMIN")
+  status       String     @default("ACTIVE")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  auditLogs    AuditLog[]
 }
 
 model AuditLog {
