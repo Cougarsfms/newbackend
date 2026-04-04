@@ -183,23 +183,54 @@ export class AdminService {
         reason: string,
         adminId: string,
     ) {
-        const booking = await this.prisma.booking.findUnique({ where: { id } });
+        const booking = await this.prisma.booking.findUnique({ 
+            where: { id },
+            include: { payments: true }
+        });
         if (!booking) throw new NotFoundException('Booking not found');
+
+        const updateData: any = { status };
+
+        if (status === 'CANCELLED') {
+            updateData.cancellationReason = reason;
+            updateData.cancelledAt = new Date();
+
+            const paidPayment = booking.payments.find(p => p.status === 'PAID');
+            if (paidPayment || booking.paymentStatus === 'PAID') {
+                updateData.paymentStatus = 'REFUNDED';
+            }
+        }
 
         const updatedBooking = await this.prisma.booking.update({
             where: { id },
-            data: { status },
+            data: updateData,
         });
 
+        if (status === 'CANCELLED' && booking.payments?.length > 0) {
+            const paidPayment = booking.payments.find(p => p.status === 'PAID');
+            if (paidPayment) {
+                await this.prisma.payment.update({
+                    where: { id: paidPayment.id },
+                    data: { status: 'REFUNDED' }
+                });
+                
+                await this.prisma.refund.create({
+                    data: {
+                        payment_id: paidPayment.id,
+                        amount: paidPayment.amount,
+                        reason: `Booking cancelled: ${reason}`,
+                        status: 'PENDING'
+                    }
+                });
+            }
+        }
+
         // Create Booking Override Log (FR-BKG-005)
-        // Assuming BookingOverride is used to track manual changes
         try {
             await this.prisma.bookingOverride.create({
                 data: {
                     booking_id: id,
                     status: status,
-                    // 'reason' is not in BookingOverride schema currently, but implied by logs.
-                    // We should create an AuditLog as well for generic auditing.
                 },
             });
 
@@ -219,29 +250,102 @@ export class AdminService {
         return updatedBooking;
     }
 
+    // FR-BKG-004: Assign Provider
+    async assignProvider(bookingId: string, providerId: string, adminId: string) {
+        const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+        if (!booking) throw new NotFoundException('Booking not found');
+
+        const provider = await this.prisma.serviceProvider.findUnique({ where: { id: providerId } });
+        if (!provider) throw new NotFoundException('Provider not found');
+
+        const updatedBooking = await this.prisma.booking.update({
+            where: { id: bookingId },
+            data: { 
+                providerId: providerId,
+                status: 'CONFIRMED' // Automatically confirm the booking when a provider is assigned
+            },
+        });
+
+        // Provider notified instantly (Simulated push notification)
+        console.log(`[Notification] Dispatching push to Provider ID: ${providerId} for new Booking: ${bookingId}`);
+
+        // Customer sees assigned provider (Implicitly tracked in DB, emitting push notification to customer)
+        console.log(`[Notification] Dispatching push to Customer ID: ${booking.userId} that Provider is assigned`);
+
+        // Create Audit Log
+        try {
+            await this.prisma.auditLog.create({
+                data: {
+                    admin_id: adminId,
+                    action: `BOOKING_PROVIDER_ASSIGNED`,
+                    details: `Assigned provider ${providerId} to booking ${bookingId}`
+                }
+            });
+        } catch (e) {
+            console.error('Audit log creation failed: ', e);
+        }
+
+        return updatedBooking;
+    }
+
     // FR-PRC-001: Create Pricing Rule
     async createPricingRule(data: CreatePricingRuleDto) {
+        // Deactivate any existing active rule for this city & service type
+        const existingActive = await this.prisma.pricingRule.findFirst({
+            where: {
+                service_type: data.service_type,
+                city: data.city,
+                isActive: true,
+            }
+        });
+
+        const newVersion = existingActive ? existingActive.version + 1 : 1;
+
+        if (existingActive) {
+            await this.prisma.pricingRule.update({
+                where: { id: existingActive.id },
+                data: { isActive: false }
+            });
+        }
+
         return this.prisma.pricingRule.create({
             data: {
                 service_type: data.service_type,
                 city: data.city,
                 base_price: data.base_price,
+                version: newVersion,
+                isActive: true,
             },
         });
     }
 
     async updatePricingRule(id: string, data: Partial<CreatePricingRuleDto>) {
-        return this.prisma.pricingRule.update({
+        const existingRule = await this.prisma.pricingRule.findUnique({ where: { id } });
+        if (!existingRule) throw new NotFoundException('Pricing rule not found');
+
+        // Versioning: Mark current as inactive
+        await this.prisma.pricingRule.update({
             where: { id },
+            data: { isActive: false }
+        });
+
+        // Create new version
+        return this.prisma.pricingRule.create({
             data: {
-                ...data,
+                service_type: data.service_type ?? existingRule.service_type,
+                city: data.city ?? existingRule.city,
+                base_price: data.base_price ?? existingRule.base_price,
+                version: existingRule.version + 1,
+                isActive: true,
             },
         });
     }
 
     async deletePricingRule(id: string) {
-        return this.prisma.pricingRule.delete({
+        // Versioning logic prefers soft delete for maintaining history of old bookings
+        return this.prisma.pricingRule.update({
             where: { id },
+            data: { isActive: false }
         });
     }
 
@@ -250,7 +354,11 @@ export class AdminService {
         return this.prisma.pricingRule.findMany({
             where: {
                 city: city ? city : undefined,
+                isActive: true, // Only fetch active pricing rules
             },
+            orderBy: {
+                city: 'asc'
+            }
         });
     }
 

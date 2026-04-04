@@ -90,10 +90,13 @@ model Booking {
 }
 
 model PricingRule {
-  id           String  @id @default(uuid())
+  id           String   @id @default(uuid())
   service_type String
   city         String
   base_price   Decimal
+  version      Int      @default(1)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
 }
 
 model SurgeRule {

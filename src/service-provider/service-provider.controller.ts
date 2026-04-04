@@ -118,6 +118,12 @@ export class ServiceProviderController {
         return this.providerService.completeJob(id, jobId);
     }
 
+    @Post(':id/jobs/:jobId/eta')
+    @ApiOperation({ summary: 'Share ETA with customer' })
+    async shareEta(@Param('id') id: string, @Param('jobId') jobId: string, @Body('etaMinutes') etaMinutes: number) {
+        return this.providerService.shareEta(id, jobId, etaMinutes);
+    }
+
     @Post(':id/location')
     @ApiOperation({ summary: 'Update live location' })
     async updateLocation(@Param('id') id: string, @Body() dto: LocationUpdateDto) {

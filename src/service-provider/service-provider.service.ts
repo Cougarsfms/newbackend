@@ -463,6 +463,20 @@ export class ServiceProviderService {
         return { ...job, earnings, durationMinutes };
     }
 
+    async shareEta(id: string, jobId: string, etaMinutes: number) {
+        // Find active booking
+        const booking = await this.prisma.spBooking.findFirst({
+            where: { provider_id: id, id: jobId },
+        });
+
+        if (!booking) throw new NotFoundException('Job not found');
+
+        // Note: For real time use, we would dispatch a WS event here to notify customer
+        console.log(`[ServiceProvider API] Provider ${id} shared ETA of ${etaMinutes} mins for job ${jobId}`);
+
+        return { success: true, message: 'ETA shared with customer', etaMinutes };
+    }
+
     async updateLocation(id: string, dto: LocationUpdateDto) {
         // Find active booking
         const booking = await this.prisma.spBooking.findFirst({

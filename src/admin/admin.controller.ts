@@ -178,6 +178,25 @@ export class AdminController {
         return this.adminService.updateBookingStatus(id, body.status, body.reason, adminId);
     }
 
+    // FR-BKG-004
+    @Patch('bookings/:id/assign')
+    @ApiOperation({
+        summary: 'Manually assign provider',
+        description: 'Assign a service provider to a booking manually',
+        tags: ['Booking Management'],
+    })
+    @ApiParam({ name: 'id', description: 'Booking ID' })
+    @ApiBody({ schema: { type: 'object', properties: { providerId: { type: 'string' } } } })
+    @ApiResponse({ status: 200, description: 'Provider assigned successfully' })
+    @ApiResponse({ status: 404, description: 'Booking or provider not found' })
+    async assignProvider(
+        @Param('id') id: string,
+        @Body('providerId') providerId: string,
+    ) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.assignProvider(id, providerId, adminId);
+    }
+
     // ==================== PRICING & COMMISSION ====================
 
     // FR-PRC-001
