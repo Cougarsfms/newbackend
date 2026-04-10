@@ -324,6 +324,23 @@ export class AdminController {
         return this.adminService.getWalletLedger(id);
     }
 
+    @Post('wallets/:id/payout')
+    @ApiOperation({
+        summary: 'Trigger provider payout',
+        description: 'Trigger a payout to a specific provider wallet',
+        tags: ['Finance & Settlements'],
+    })
+    @ApiParam({ name: 'id', description: 'Wallet ID' })
+    @ApiBody({ schema: { type: 'object', properties: { amount: { type: 'number' } } } })
+    @ApiResponse({ status: 200, description: 'Payout successful' })
+    @ApiResponse({ status: 400, description: 'Bad request / Insufficient balance' })
+    async triggerPayout(
+        @Param('id') id: string,
+        @Body('amount') amount: number,
+    ) {
+        return this.adminService.triggerPayout(id, amount);
+    }
+
     // FR-FIN-002
     @Get('settlements')
     @ApiOperation({

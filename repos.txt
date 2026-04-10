@@ -1,0 +1,23 @@
+﻿python.exe : Listing 
+items under project 
+quick-serviceapi, 
+location us-central1.
+At C:\Users\Sudeep Jaiswal
+\AppData\Local\Google\Clou
+d SDK\google-cloud-sdk\bin
+\gcloud.ps1:114 char:3
++   & "$cloudsdk_python" 
+$run_args_array
++   ~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~
+    + CategoryInfo        
+      : NotSpecified: (L  
+  isting items u...on u   
+ s-central1.:String) [    
+], RemoteException
+    + FullyQualifiedError 
+   Id : NativeCommandErr  
+  or
+ 
+
+cloud-run-source-deploy

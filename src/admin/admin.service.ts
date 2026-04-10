@@ -447,6 +447,37 @@ export class AdminService {
         return settlement;
     }
 
+    // Trigger Payout
+    async triggerPayout(walletId: string, amount: number) {
+        const wallet = await this.prisma.wallet.findUnique({ where: { id: walletId } });
+        if (!wallet) throw new NotFoundException('Wallet not found');
+        if (amount <= 0) throw new Error('Amount must be greater than 0');
+        if (Number(wallet.balance) < amount) throw new Error('Payout cannot exceed wallet balance');
+
+        const updatedWallet = await this.prisma.wallet.update({
+            where: { id: walletId },
+            data: { balance: { decrement: amount } }
+        });
+
+        await this.prisma.walletLedger.create({
+            data: {
+                wallet_id: walletId,
+                entry_type: 'PAYOUT',
+                amount: new Prisma.Decimal(-amount),
+            }
+        });
+
+        const settlement = await this.prisma.settlement.create({
+            data: {
+                wallet_id: walletId,
+                amount: amount,
+                status: 'COMPLETED',
+            }
+        });
+
+        return { wallet: updatedWallet, settlement };
+    }
+
     // FR-ANA-001: Dashboard Statistics
     async getDashboardStats() {
         const now = new Date();
