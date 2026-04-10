@@ -7,117 +7,28 @@ export class BookingsService {
   constructor(private prisma: PrismaService) { }
 
   async createBooking(userId: string, serviceId: string, date: Date, addressId: string, bookingType: string) {
-    // 1. Fetch service to get price
     let service = await this.prisma.serviceItem.findUnique({ where: { id: serviceId } });
     if (!service && serviceId.startsWith('svc_')) {
-      // Find or create a mock category
       let category = await this.prisma.serviceCategory.findFirst({});
       if (!category) {
-        category = await this.prisma.serviceCategory.create({
-          data: { name: 'Mock Category', icon: '📝' }
-        });
+        category = await this.prisma.serviceCategory.create({ data: { name: 'Mock Category', icon: '📝' } });
       }
-      // Create the missing mock service item
       service = await this.prisma.serviceItem.create({
-        data: {
-          id: serviceId,
-          name: 'Mock Service ' + serviceId,
-          description: 'Auto-generated mock service',
-          price: 499,
-          categoryId: category.id
-        }
+        data: { id: serviceId, name: 'Mock Service ' + serviceId, description: 'Auto-generated mock service', price: 499, categoryId: category.id }
       });
     } else if (!service) {
       throw new Error('Service not found');
     }
 
-    // 2. Find Nearest Eligible Provider
-    let availableProvider: any = null;
-    let customerAddress: any = null;
-
-    if (addressId) {
-      customerAddress = await this.prisma.customerAddress.findUnique({
-        where: { id: addressId },
-      });
-    }
-
-    // Fallback coordinates for algorithm testing if no matching address was in the DB
-    if (!customerAddress) {
-      customerAddress = {
-        latitude: 28.55,
-        longitude: 77.20
-      };
-    }
-
-    if (customerAddress) {
-      const providers = await this.prisma.serviceProvider.findMany({
-        where: {
-          status: 'ACTIVE',
-          availabilities: {
-            some: { is_online: true },
-          },
-        },
-        include: { user: true, providerAddresses: true },
-      });
-
-      let minDistance = Infinity;
-
-      for (const provider of providers) {
-        for (const addr of provider.providerAddresses) {
-          const dist = this.calculateDistance(
-            customerAddress.latitude,
-            customerAddress.longitude,
-            addr.latitude,
-            addr.longitude,
-          );
-          if (dist < minDistance) {
-            minDistance = dist;
-            availableProvider = provider;
-          }
-        }
-      }
-    }
-
-    // Fallback if no location matched or address missing
-    if (!availableProvider) {
-      availableProvider = await this.prisma.serviceProvider.findFirst({
-        where: {
-          status: 'ACTIVE',
-          availabilities: {
-            some: { is_online: true },
-          },
-        },
-        include: { user: true },
-      });
-    }
-
-    let assignedProviderId: string | null = null;
-    let initialStatus: BookingStatus = BookingStatus.PENDING;
-
-    if (availableProvider) {
-      console.log(`[Algorithm] Found nearest provider: ${availableProvider.name} (${availableProvider.id})`);
-      assignedProviderId = availableProvider.id;
-      // Mark as CONFIRMED if provider found
-      initialStatus = BookingStatus.CONFIRMED;
-
-      // Acceptance criteria notifications
-      console.log(`[Notification] To Customer: Your booking has been assigned to provider ${availableProvider.name}.`);
-      console.log(`[Notification] To Provider ${availableProvider.name}: You have been dispatched for a new booking.`);
-    } else {
-      console.warn('[Algorithm] No available providers found.');
-    }
-
-    // 3. Create Booking
     const booking = await this.prisma.booking.create({
       data: {
         userId,
         serviceId,
         date,
         totalAmount: service.price,
-        status: initialStatus,
+        status: BookingStatus.PENDING,
         addressId,
         bookingType,
-        providerId: assignedProviderId,
       },
       include: {
         service: true,
@@ -125,22 +36,82 @@ export class BookingsService {
       }
     });
 
-    // 4. Create SpBooking for provider assignment queue
-    if (assignedProviderId) {
-      const endDate = new Date(date);
-      endDate.setHours(endDate.getHours() + 1);
+    // Start auto assignment logic asynchronously
+    this.assignProviderToBooking(booking.id).catch(e => console.error(e));
 
-      await this.prisma.spBooking.create({
-        data: {
-          provider_id: assignedProviderId,
-          status: 'PENDING',
-          start_time: date,
-          end_time: endDate,
+    return booking;
+  }
+
+  async assignProviderToBooking(bookingId: string, excludeProviderIds: string[] = []) {
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    if (!booking || booking.status !== BookingStatus.PENDING) return;
+
+    let customerAddress: any = booking.addressId ? await this.prisma.customerAddress.findUnique({ where: { id: booking.addressId } }) : null;
+    if (!customerAddress) {
+      customerAddress = { latitude: 28.55, longitude: 77.20 };
+    }
+
+    const providers = await this.prisma.serviceProvider.findMany({
+      where: {
+        status: 'ACTIVE',
+        id: { notIn: excludeProviderIds },
+        availabilities: { some: { is_online: true } },
+      },
+      include: { user: true, providerAddresses: true },
+    });
+
+    let availableProvider: any = null;
+    let minDistance = Infinity;
+
+    for (const provider of providers) {
+      for (const addr of provider.providerAddresses) {
+        const dist = this.calculateDistance(customerAddress.latitude, customerAddress.longitude, addr.latitude, addr.longitude);
+        if (dist < minDistance) {
+          minDistance = dist;
+          availableProvider = provider;
         }
+      }
+    }
+
+    if (!availableProvider) {
+      availableProvider = await this.prisma.serviceProvider.findFirst({
+        where: { status: 'ACTIVE', id: { notIn: excludeProviderIds }, availabilities: { some: { is_online: true } } },
+        include: { user: true },
       });
     }
 
-    return booking;
+    if (availableProvider) {
+      console.log(`[Algorithm] Found nearest provider: ${availableProvider.name} (${availableProvider.id})`);
+      
+      const endDate = new Date(booking.date);
+      endDate.setHours(endDate.getHours() + 1);
+
+      // Create an SpBooking for this provider to accept/reject
+      const spBooking = await this.prisma.spBooking.create({
+        data: {
+          provider_id: availableProvider.id,
+          status: 'PENDING',
+          start_time: booking.date,
+          end_time: endDate,
+          booking_id: booking.id,
+        }
+      });
+
+      console.log(`[Notification] To Provider ${availableProvider.name}: You have been matched for a new booking.`);
+      
+      // Auto-expire after 120 seconds if not accepted
+      setTimeout(async () => {
+        const checkSp = await this.prisma.spBooking.findUnique({ where: { id: spBooking.id } });
+        if (checkSp && checkSp.status === 'PENDING') {
+           console.log(`[Timeout] Job expired for ${availableProvider.name}, reassigning...`);
+           await this.prisma.spBooking.update({ where: { id: spBooking.id }, data: { status: 'EXPIRED' } });
+           this.assignProviderToBooking(booking.id, [...excludeProviderIds, availableProvider.id]).catch(e => console.error(e));
+        }
+      }, 120 * 1000);
+
+    } else {
+      console.warn('[Algorithm] No available providers found.');
+    }
   }
 
   async getUserBookings(userId: string) {
@@ -259,8 +230,17 @@ export class BookingsService {
     if (!booking) throw new Error('Booking not found');
 
     if (!booking.providerId) {
-      // Return null/empty if no provider to avoid error in UI polling
       return { location: null, eta: null };
+    }
+
+    let destLat = 12.9716;
+    let destLng = 77.5946;
+    if (booking.addressId) {
+       const address = await this.prisma.customerAddress.findUnique({ where: { id: booking.addressId }});
+       if (address) {
+          destLat = address.latitude;
+          destLng = address.longitude;
+       }
     }
 
     const ping = await this.prisma.locationPing.findFirst({
@@ -268,24 +248,28 @@ export class BookingsService {
       orderBy: { createdAt: 'desc' },
     });
 
-    // For demo: if no ping, generate a mock one based on a fixed location (e.g. city center)
-    // so the tracking screen always shows something.
-    const mockLatitude = 12.9716;
-    const mockLongitude = 77.5946;
+    let currentLat = 12.9716 + (Math.random() - 0.5) * 0.01;
+    let currentLng = 77.5946 + (Math.random() - 0.5) * 0.01;
+    let accuracy = 20;
+    
+    if (ping) {
+       currentLat = ping.latitude;
+       currentLng = ping.longitude;
+       accuracy = 10;
+    }
+
+    const distanceKm = this.calculateDistance(destLat, destLng, currentLat, currentLng);
+    // Rough estimate: average speed 30km/h in city => 0.5 km/min.
+    const estimatedMinutes = Math.max(1, Math.round(distanceKm / 0.5));
 
     return {
-      location: ping ? {
-        latitude: ping.latitude,
-        longitude: ping.longitude,
-        timestamp: ping.createdAt,
-        accuracy: 10
-      } : {
-        latitude: mockLatitude + (Math.random() - 0.5) * 0.01,
-        longitude: mockLongitude + (Math.random() - 0.5) * 0.01,
-        timestamp: new Date(),
-        accuracy: 20
+      location: {
+        latitude: currentLat,
+        longitude: currentLng,
+        timestamp: ping ? ping.createdAt : new Date(),
+        accuracy: accuracy
       },
-      eta: 15 // Mock ETA
+      eta: estimatedMinutes
     };
   }
 

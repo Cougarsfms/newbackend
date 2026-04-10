@@ -225,6 +225,7 @@ model SpBooking {
   updatedAt     DateTime        @updatedAt
   locationPings LocationPing[]
   ratings       Rating[]
+  booking_id    String?
 }
 
 model performancemetric {

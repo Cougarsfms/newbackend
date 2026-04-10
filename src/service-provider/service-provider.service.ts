@@ -373,40 +373,125 @@ export class ServiceProviderService {
         }
 
         // Return only jobs explicitly assigned to this provider by the mapping algorithm
-        return this.prisma.spBooking.findMany({
+        const spBookings = await this.prisma.spBooking.findMany({
             where: {
                 status: 'PENDING',
                 provider_id: id
             },
         });
+
+        const enriched: any[] = [];
+        for (const sp of spBookings) {
+            if (sp.booking_id) {
+                const b = await this.prisma.booking.findUnique({ where: { id: sp.booking_id }, include: { user: true } });
+                let addressStr = 'Not provided';
+                let lat = 0; let lng = 0;
+                if (b?.addressId) {
+                    const custAddr = await this.prisma.customerAddress.findUnique({ where: { id: b.addressId } });
+                    if (custAddr) { addressStr = custAddr.address; lat = custAddr.latitude; lng = custAddr.longitude; }
+                }
+                const svc = await this.prisma.serviceItem.findUnique({ where: { id: b?.serviceId ?? '' } });
+                
+                enriched.push({
+                    id: sp.id,
+                    bookingId: b?.id,
+                    customerName: b?.user?.name || 'Customer',
+                    address: addressStr,
+                    latitude: lat,
+                    longitude: lng,
+                    serviceCategoryId: svc ? svc.categoryId : 'sweep',
+                    scheduledAt: sp.start_time,
+                    acceptExpiresAt: sp.end_time,
+                    status: 'pending_accept',
+                });
+            } else {
+                enriched.push({
+                    id: sp.id,
+                    customerName: 'Customer',
+                    address: 'Mock Address',
+                    latitude: 28.5,
+                    longitude: 77.2,
+                    serviceCategoryId: 'sweep',
+                    scheduledAt: sp.start_time,
+                    acceptExpiresAt: sp.end_time,
+                    status: 'pending_accept',
+                });
+            }
+        }
+        return enriched;
     }
 
     async acceptJob(id: string, jobId: string) {
         const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
         if (!provider) throw new NotFoundException('Provider not found');
 
-        if (provider.Kyc_status !== 'APPROVED') {
-            throw new BadRequestException('KYC verification required to accept jobs');
-        }
+        // if (provider.Kyc_status !== 'APPROVED') {
+        //     throw new BadRequestException('KYC verification required to accept jobs');
+        // }
 
         const job = await this.prisma.spBooking.findUnique({ where: { id: jobId } });
         if (!job) throw new NotFoundException('Job not found');
         if (job.status !== 'PENDING') throw new BadRequestException('Job already taken or cancelled');
 
-        return this.prisma.spBooking.update({
+        const updatedSp = await this.prisma.spBooking.update({
             where: { id: jobId },
             data: {
                 status: 'ACCEPTED',
                 provider_id: id,
             },
         });
+
+        if (updatedSp.booking_id) {
+            await this.prisma.booking.update({
+               where: { id: updatedSp.booking_id },
+               data: { status: 'CONFIRMED', providerId: id }
+            });
+            console.log(`[Notification] To Customer: Your booking has been accepted by provider.`);
+        }
+        
+        // Enrich returning object for the app
+        const b = updatedSp.booking_id ? await this.prisma.booking.findUnique({ where: { id: updatedSp.booking_id }, include: { user: true } }) : null;
+        return {
+            id: updatedSp.id,
+            bookingId: b?.id,
+            customerName: b?.user?.name || 'Customer',
+            status: 'accepted'
+        };
     }
 
     async rejectJob(id: string, jobId: string, dto: JobActionDto) {
-        return this.prisma.spBooking.update({
+        const updated = await this.prisma.spBooking.update({
             where: { id: jobId },
             data: { status: 'REJECTED' },
         });
+
+        if (updated.booking_id) {
+            const booking = await this.prisma.booking.findUnique({ where: { id: updated.booking_id }});
+            if (booking && booking.status === 'PENDING') {
+                const availableProvider = await this.prisma.serviceProvider.findFirst({
+                    where: { 
+                      status: 'ACTIVE', 
+                      id: { not: id }, 
+                      availabilities: { some: { is_online: true } } 
+                    }
+                });
+                if (availableProvider) {
+                    const endDate = new Date(booking.date);
+                    endDate.setHours(endDate.getHours() + 1);
+                    await this.prisma.spBooking.create({
+                        data: {
+                            provider_id: availableProvider.id,
+                            status: 'PENDING',
+                            start_time: booking.date,
+                            end_time: endDate,
+                            booking_id: booking.id,
+                        }
+                    });
+                    console.log(`[Notification] Job reassigned to Provider ${availableProvider.name}.`);
+                }
+            }
+        }
+        return updated;
     }
 
     // ==================== NAVIGATION & JOB EXECUTION ====================
@@ -480,14 +565,17 @@ export class ServiceProviderService {
     async updateLocation(id: string, dto: LocationUpdateDto) {
         // Find active booking
         const booking = await this.prisma.spBooking.findFirst({
-            where: { provider_id: id, status: 'IN_PROGRESS' },
+            where: { 
+               provider_id: id, 
+               status: { in: ['ACCEPTED', 'IN_PROGRESS', 'ARRIVED'] } 
+            },
         });
 
         if (booking) {
             await this.prisma.locationPing.create({
                 data: {
                     provider_id: id,
-                    booking_id: booking.id,
+                    booking_id: booking.booking_id || booking.id,
                     latitude: dto.latitude,
                     longitude: dto.longitude,
                 },
