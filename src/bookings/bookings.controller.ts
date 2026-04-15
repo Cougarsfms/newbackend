@@ -57,4 +57,9 @@ export class BookingsController {
   async getLocation(@Param('id') id: string) {
     return this.bookingsService.getTrackingLocation(id);
   }
+
+  @Post(':id/end')
+  async endJob(@Param('id') id: string) {
+    return this.bookingsService.endJob(id);
+  }
 }

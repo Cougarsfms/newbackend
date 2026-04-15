@@ -108,14 +108,20 @@ export class ServiceProviderController {
 
     @Post(':id/jobs/:jobId/start')
     @ApiOperation({ summary: 'Start the job' })
-    async startJob(@Param('id') id: string, @Param('jobId') jobId: string) {
-        return this.providerService.startJob(id, jobId);
+    async startJob(@Param('id') id: string, @Param('jobId') jobId: string, @Body('otp') otp: string) {
+        return this.providerService.startJob(id, jobId, otp);
     }
 
     @Post(':id/jobs/:jobId/complete')
     @ApiOperation({ summary: 'Complete the job' })
     async completeJob(@Param('id') id: string, @Param('jobId') jobId: string) {
         return this.providerService.completeJob(id, jobId);
+    }
+
+    @Post(':id/jobs/:jobId/end')
+    @ApiOperation({ summary: 'End the job early' })
+    async endJob(@Param('id') id: string, @Param('jobId') jobId: string) {
+        return this.providerService.endJob(id, jobId, true);
     }
 
     @Post(':id/jobs/:jobId/eta')
@@ -203,5 +209,11 @@ export class ServiceProviderController {
     @ApiOperation({ summary: 'Delete a saved address' })
     async deleteAddress(@Param('id') id: string, @Param('addressId') addressId: string) {
         return this.providerService.deleteAddress(id, addressId);
+    }
+
+    @Get(':id/jobs/active')
+    @ApiOperation({ summary: 'Get current active job' })
+    async getActiveJob(@Param('id') id: string) {
+        return this.providerService.getActiveJob(id);
     }
 }

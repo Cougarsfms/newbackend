@@ -266,6 +266,32 @@ export class AdminService {
             },
         });
 
+        // Ensure there is an spBooking record so the provider app sees this job
+        // Check if one already exists
+        const existingSpJob = await this.prisma.spBooking.findFirst({
+            where: { booking_id: bookingId, provider_id: providerId }
+        });
+
+        if (!existingSpJob) {
+            const endDate = new Date(booking.date);
+            endDate.setHours(endDate.getHours() + 1); // Mock 1 hour duration
+
+            await this.prisma.spBooking.create({
+                data: {
+                    provider_id: providerId,
+                    booking_id: bookingId,
+                    status: 'ACCEPTED',
+                    start_time: booking.date,
+                    end_time: endDate
+                }
+            });
+        } else if (existingSpJob.status !== 'ACCEPTED') {
+            await this.prisma.spBooking.update({
+                where: { id: existingSpJob.id },
+                data: { status: 'ACCEPTED' }
+            });
+        }
+
         // Provider notified instantly (Simulated push notification)
         console.log(`[Notification] Dispatching push to Provider ID: ${providerId} for new Booking: ${bookingId}`);
 

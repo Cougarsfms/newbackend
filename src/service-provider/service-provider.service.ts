@@ -403,6 +403,7 @@ export class ServiceProviderService {
                     scheduledAt: sp.start_time,
                     acceptExpiresAt: sp.end_time,
                     status: 'pending_accept',
+                    durationMinutes: svc ? svc.durationMinutes : 60,
                 });
             } else {
                 enriched.push({
@@ -415,6 +416,7 @@ export class ServiceProviderService {
                     scheduledAt: sp.start_time,
                     acceptExpiresAt: sp.end_time,
                     status: 'pending_accept',
+                    durationMinutes: 60,
                 });
             }
         }
@@ -425,13 +427,17 @@ export class ServiceProviderService {
         const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
         if (!provider) throw new NotFoundException('Provider not found');
 
-        // if (provider.Kyc_status !== 'APPROVED') {
-        //     throw new BadRequestException('KYC verification required to accept jobs');
-        // }
-
         const job = await this.prisma.spBooking.findUnique({ where: { id: jobId } });
         if (!job) throw new NotFoundException('Job not found');
         if (job.status !== 'PENDING') throw new BadRequestException('Job already taken or cancelled');
+
+        // If booking was already accepted by another provider, reject this attempt
+        if (job.booking_id) {
+            const parentBooking = await this.prisma.booking.findUnique({ where: { id: job.booking_id } });
+            if (parentBooking && parentBooking.status !== 'PENDING') {
+                throw new BadRequestException('This job has already been accepted by another provider');
+            }
+        }
 
         const updatedSp = await this.prisma.spBooking.update({
             where: { id: jobId },
@@ -442,20 +448,54 @@ export class ServiceProviderService {
         });
 
         if (updatedSp.booking_id) {
+            // Accept: mark the parent booking as CONFIRMED with this provider
             await this.prisma.booking.update({
                where: { id: updatedSp.booking_id },
                data: { status: 'CONFIRMED', providerId: id }
             });
-            console.log(`[Notification] To Customer: Your booking has been accepted by provider.`);
+
+            // Auto-close all OTHER pending SpBookings for the same parent booking
+            const cancelled = await this.prisma.spBooking.updateMany({
+                where: {
+                    booking_id: updatedSp.booking_id,
+                    id: { not: jobId },
+                    status: 'PENDING',
+                },
+                data: { status: 'CANCELLED' },
+            });
+            console.log(`[Algorithm] Booking ${updatedSp.booking_id} accepted by ${provider.name}. Closed ${cancelled.count} other pending notification(s).`);
+            console.log(`[Notification] To Customer: Your booking has been accepted by ${provider.name}.`);
         }
         
         // Enrich returning object for the app
-        const b = updatedSp.booking_id ? await this.prisma.booking.findUnique({ where: { id: updatedSp.booking_id }, include: { user: true } }) : null;
+        const b = updatedSp.booking_id ? await this.prisma.booking.findUnique({ 
+            where: { id: updatedSp.booking_id }, 
+            include: { user: true, service: true } 
+        }) : null;
+
+        let address = 'N/A';
+        let lat = 0;
+        let lng = 0;
+        if (b?.addressId) {
+            const addr = await this.prisma.customerAddress.findUnique({ where: { id: b.addressId } });
+            if (addr) {
+                address = addr.address;
+                lat = addr.latitude;
+                lng = addr.longitude;
+            }
+        }
+
         return {
             id: updatedSp.id,
             bookingId: b?.id,
             customerName: b?.user?.name || 'Customer',
-            status: 'accepted'
+            status: 'accepted',
+            address,
+            latitude: lat,
+            longitude: lng,
+            scheduledAt: b?.date,
+            serviceCategoryId: b?.service?.categoryId || 'sweep',
+            durationMinutes: b?.service?.durationMinutes || 60,
         };
     }
 
@@ -497,20 +537,103 @@ export class ServiceProviderService {
     // ==================== NAVIGATION & JOB EXECUTION ====================
 
     async markArrival(id: string, jobId: string) {
-        return this.prisma.spBooking.update({
+        const updated = await this.prisma.spBooking.update({
             where: { id: jobId },
             data: { status: 'ARRIVED' },
         });
+        return { id: updated.id, status: 'arrived' };
     }
 
-    async startJob(id: string, jobId: string) {
-        return this.prisma.spBooking.update({
-            where: { id: jobId },
+    async startJob(providerId: string, spBookingId: string, otp: string) {
+        const spBooking = await this.prisma.spBooking.findUnique({
+            where: { id: spBookingId },
+            include: { booking: true }
+        });
+
+        if (!spBooking) throw new NotFoundException('Job not found');
+        if (!spBooking.booking) throw new BadRequestException('Parent booking not found');
+        
+        if (spBooking.booking.startOTP !== otp) {
+            throw new BadRequestException('Invalid OTP provided');
+        }
+
+        const now = new Date();
+
+        // 1. Update SpBooking
+        const updatedSp = await this.prisma.spBooking.update({
+            where: { id: spBookingId },
             data: {
                 status: 'IN_PROGRESS',
-                start_time: new Date(),
+                start_time: now,
             },
         });
+
+        // 2. Update Parent Booking
+        await this.prisma.booking.update({
+            where: { id: spBooking.booking.id },
+            data: {
+                status: 'IN_PROGRESS',
+                jobStartedAt: now,
+            }
+        });
+
+        return { id: updatedSp.id, status: 'in_progress', startedAt: now };
+    }
+
+    async endJob(userIdOrProviderId: string, jobId: string, isProvider: boolean) {
+        // This accepts either SpBooking.id (jobId) or Booking.id?
+        // Let's assume jobId is SpBooking.id if isProvider is true, else Booking.id if isProvider is false.
+        // But to be consistent, let's look for the parent Booking.
+
+        let targetBookingId: string;
+        let spBookingId: string | undefined;
+
+        if (isProvider) {
+            const spBooking = await this.prisma.spBooking.findUnique({ where: { id: jobId } });
+            if (!spBooking) throw new NotFoundException('Job not found');
+            if (!spBooking.booking_id) throw new BadRequestException('No parent booking linked to this job');
+            targetBookingId = spBooking.booking_id;
+            spBookingId = spBooking.id;
+        } else {
+            targetBookingId = jobId;
+        }
+
+        const booking = await this.prisma.booking.findUnique({ where: { id: targetBookingId } });
+        if (!booking) throw new NotFoundException('Booking not found');
+
+        if (booking.status === 'COMPLETED' || booking.status === 'CANCELLED') {
+            throw new BadRequestException('Job already ended');
+        }
+
+        const now = new Date();
+
+        // 1. Update Parent Booking
+        const updatedBooking = await this.prisma.booking.update({
+            where: { id: targetBookingId },
+            data: {
+                status: 'COMPLETED',
+                jobEndedAt: now,
+            }
+        });
+
+        // 2. Update SpBooking status if it exists
+        if (spBookingId || updatedBooking.providerId) {
+            const spId = spBookingId || (await this.prisma.spBooking.findFirst({
+                where: { booking_id: targetBookingId, status: { in: ['IN_PROGRESS', 'ACCEPTED', 'ARRIVED'] } }
+            }))?.id;
+
+            if (spId) {
+                await this.prisma.spBooking.update({
+                    where: { id: spId },
+                    data: {
+                        status: 'COMPLETED',
+                        end_time: now,
+                    }
+                });
+            }
+        }
+
+        return { id: targetBookingId, status: 'completed', endedAt: now };
     }
 
     async completeJob(id: string, jobId: string) {
@@ -563,7 +686,23 @@ export class ServiceProviderService {
     }
 
     async updateLocation(id: string, dto: LocationUpdateDto) {
-        // Find active booking
+        // 1. Update live location in Availability for immediate radius matching
+        const availability = await this.prisma.availability.findFirst({
+            where: { provider_id: id }
+        });
+
+        if (availability) {
+            await this.prisma.availability.update({
+                where: { id: availability.id },
+                data: {
+                    currentLatitude: dto.latitude,
+                    currentLongitude: dto.longitude,
+                    last_seen: new Date(),
+                },
+            });
+        }
+
+        // 2. Log location ping if there's an active booking
         const booking = await this.prisma.spBooking.findFirst({
             where: { 
                provider_id: id, 
@@ -575,7 +714,7 @@ export class ServiceProviderService {
             await this.prisma.locationPing.create({
                 data: {
                     provider_id: id,
-                    booking_id: booking.booking_id || booking.id,
+                    booking_id: booking.id,
                     latitude: dto.latitude,
                     longitude: dto.longitude,
                 },
@@ -624,6 +763,41 @@ export class ServiceProviderService {
     }
 
     // ==================== RATINGS & PERFORMANCE ====================
+
+    async getActiveJob(id: string) {
+        const job = await this.prisma.spBooking.findFirst({
+            where: { 
+                provider_id: id, 
+                status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] } 
+            },
+            include: { booking: { include: { user: true, service: true } } }
+        });
+
+        if (!job || !job.booking) return null;
+
+        const b = job.booking;
+        let address = 'N/A';
+        let lat = 0; let lng = 0;
+        if (b.addressId) {
+            const addr = await this.prisma.customerAddress.findUnique({ where: { id: b.addressId } });
+            if (addr) { address = addr.address; lat = addr.latitude; lng = addr.longitude; }
+        }
+
+        return {
+            id: job.id,
+            bookingId: b.id,
+            customerName: b.user?.name || 'Customer',
+            status: job.status.toLowerCase() as any,
+            address,
+            latitude: lat,
+            longitude: lng,
+            scheduledAt: b.date,
+            startedAt: job.start_time,
+            serviceCategoryId: b.service?.categoryId || 'sweep',
+            durationMinutes: b.service?.durationMinutes || 60,
+            providerId: id,
+        };
+    }
 
     async getRatings(id: string) {
         return this.prisma.rating.findMany({

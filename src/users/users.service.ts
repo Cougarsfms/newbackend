@@ -7,8 +7,17 @@ export class UsersService {
   constructor(private prisma: PrismaService) { }
 
   async findOneByPhone(phoneNumber: string): Promise<User | null> {
-    return this.prisma.user.findUnique({
-      where: { phoneNumber },
+    // Basic normalization: remove any non-digit chars and take last 10 digits
+    const cleaned = phoneNumber.replace(/\D/g, '').slice(-10);
+    
+    return this.prisma.user.findFirst({
+      where: { 
+        OR: [
+          { phoneNumber: cleaned },
+          { phoneNumber: '+91' + cleaned },
+          { phoneNumber: '+91-' + cleaned }
+        ]
+      },
     });
   }
 

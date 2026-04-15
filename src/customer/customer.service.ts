@@ -69,6 +69,7 @@ export class CustomerService {
             message: 'Login successful',
             token: 'mock-jwt-token',
             customerId: user.customers[0].id,
+            isOnboarded: user.customers[0].isOnboarded,
         };
     }
 
@@ -90,7 +91,10 @@ export class CustomerService {
         if (!customer) throw new NotFoundException('Customer not found');
 
         if (dto.name) {
-            await this.prisma.customer.update({ where: { id }, data: { name: dto.name } });
+            await this.prisma.customer.update({ where: { id }, data: { name: dto.name, isOnboarded: true } });
+        } else {
+            // Even if name is not updated, if they hit this endpoint, we assume they are progressing
+            await this.prisma.customer.update({ where: { id }, data: { isOnboarded: true } });
         }
 
         // Update or create profile

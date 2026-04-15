@@ -47,6 +47,7 @@ model ServiceItem {
 
   categoryId String
   category   ServiceCategory @relation(fields: [categoryId], references: [id])
+  durationMinutes Int @default(60)
   bookings   Booking[]
 }
 
@@ -75,6 +76,10 @@ model Booking {
 
   totalAmount Decimal
 
+  startOTP       String?
+  jobStartedAt   DateTime?
+  jobEndedAt     DateTime?
+
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   bookingOverrides BookingOverride[]
@@ -87,6 +92,7 @@ model Booking {
 
   paymentStatus String    @default("PENDING") // PENDING, PAID, REFUNDED
   payments      Payment[]
+  spBookings    SpBooking[]
 }
 
 model PricingRule {
@@ -205,13 +211,15 @@ model ProviderProfile {
 }
 
 model Availability {
-  id          String          @id @default(uuid())
-  provider_id String
-  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
-  is_online   Boolean         @default(true)
-  last_seen   DateTime        @default(now())
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  id               String          @id @default(uuid())
+  provider_id      String
+  provider         ServiceProvider @relation(fields: [provider_id], references: [id])
+  is_online        Boolean         @default(true)
+  last_seen        DateTime        @default(now())
+  currentLatitude  Float?
+  currentLongitude Float?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 }
 
 model SpBooking {
@@ -226,6 +234,7 @@ model SpBooking {
   locationPings LocationPing[]
   ratings       Rating[]
   booking_id    String?
+  booking       Booking?        @relation(fields: [booking_id], references: [id])
 }
 
 model performancemetric {
@@ -338,9 +347,10 @@ model Customer {
   user_id            String
   user               User                @relation(fields: [user_id], references: [id])
   name               String
-  phoneNumber        String
+  phoneNumber        String              @unique
   status             String              @default("PENDING")
   trust_score        Int                 @default(0)
+  isOnboarded        Boolean             @default(false)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   customerViolations CustomerViolation[]
@@ -428,7 +438,10 @@ model CustomerBooking {
   provider       ServiceProvider @relation(fields: [provider_id], references: [id])
   status         String          @default("PENDING")
   scheduled_at   DateTime        @default(now())
-  completed_at   DateTime        @default(now())
+  completed_at   DateTime?       
+  startOTP       String?
+  jobStartedAt   DateTime?
+  jobEndedAt     DateTime?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   trackingEvents TrackingEvent[]
