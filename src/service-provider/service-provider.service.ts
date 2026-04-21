@@ -434,8 +434,19 @@ export class ServiceProviderService {
         // If booking was already accepted by another provider, reject this attempt
         if (job.booking_id) {
             const parentBooking = await this.prisma.booking.findUnique({ where: { id: job.booking_id } });
-            if (parentBooking && parentBooking.status !== 'PENDING') {
-                throw new BadRequestException('This job has already been accepted by another provider');
+            
+            if (parentBooking) {
+                // If the booking is already CONFIRMED but by someone else, block it.
+                // If it was manually assigned to THIS provider by the admin, parentBooking.status will be CONFIRMED
+                // and providerId will match. We should allow acceptance in this case to transition spBooking status.
+                if (parentBooking.status === 'CONFIRMED' && parentBooking.providerId !== id) {
+                    throw new BadRequestException('This job has already been accepted by another provider');
+                }
+                
+                // If it's already in progress or completed, definitely block.
+                if (['IN_PROGRESS', 'COMPLETED', 'CANCELLED'].includes(parentBooking.status)) {
+                    throw new BadRequestException('This job is no longer available');
+                }
             }
         }
 
@@ -507,7 +518,16 @@ export class ServiceProviderService {
 
         if (updated.booking_id) {
             const booking = await this.prisma.booking.findUnique({ where: { id: updated.booking_id }});
-            if (booking && booking.status === 'PENDING') {
+            // If the booking was confirmed (manual assignment) or pending, reset it for reassignment
+            if (booking && (booking.status === 'PENDING' || booking.status === 'CONFIRMED')) {
+                // If it was manual assignment (CONFIRMED), revert to PENDING so mapping can pick it up or admin can reassign
+                if (booking.status === 'CONFIRMED') {
+                    await this.prisma.booking.update({
+                        where: { id: booking.id },
+                        data: { status: 'PENDING', providerId: null }
+                    });
+                }
+
                 const availableProvider = await this.prisma.serviceProvider.findFirst({
                     where: { 
                       status: 'ACTIVE', 

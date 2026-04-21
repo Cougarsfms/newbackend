@@ -37,6 +37,7 @@ model ServiceCategory {
   icon   String // URL or Icon Name
   items  ServiceItem[]
   active Boolean       @default(true)
+  providers ServiceProvider[]
 }
 
 model ServiceItem {
@@ -49,6 +50,7 @@ model ServiceItem {
   category   ServiceCategory @relation(fields: [categoryId], references: [id])
   durationMinutes Int @default(60)
   bookings   Booking[]
+  providers ServiceProvider[]
 }
 
 enum BookingStatus {
@@ -198,6 +200,8 @@ model ServiceProvider {
   bookings           Booking[]
   customerBookings   CustomerBooking[]
   providerAddresses  ProviderAddress[]
+  categories         ServiceCategory[]
+  items              ServiceItem[]
 }
 
 model ProviderProfile {

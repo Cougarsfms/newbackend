@@ -35,4 +35,14 @@ export class CreateServiceProviderDto {
     @IsOptional()
     @IsString()
     status?: string;
+
+    @ApiPropertyOptional({ description: 'Category IDs this provider can handle', type: [String] })
+    @IsOptional()
+    @IsString({ each: true })
+    categoryIds?: string[];
+
+    @ApiPropertyOptional({ description: 'Specific Item IDs this provider can handle', type: [String] })
+    @IsOptional()
+    @IsString({ each: true })
+    itemIds?: string[];
 }

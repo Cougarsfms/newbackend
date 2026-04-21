@@ -262,7 +262,7 @@ export class AdminService {
             where: { id: bookingId },
             data: { 
                 providerId: providerId,
-                status: 'CONFIRMED' // Automatically confirm the booking when a provider is assigned
+                status: 'CONFIRMED' // Admin manual assignment confirms the provider for the customer
             },
         });
 
@@ -280,15 +280,15 @@ export class AdminService {
                 data: {
                     provider_id: providerId,
                     booking_id: bookingId,
-                    status: 'ACCEPTED',
+                    status: 'PENDING',
                     start_time: booking.date,
                     end_time: endDate
                 }
             });
-        } else if (existingSpJob.status !== 'ACCEPTED') {
+        } else if (existingSpJob.status !== 'PENDING') {
             await this.prisma.spBooking.update({
                 where: { id: existingSpJob.id },
-                data: { status: 'ACCEPTED' }
+                data: { status: 'PENDING' }
             });
         }
 
@@ -668,7 +668,12 @@ export class AdminService {
                 city: city ? { contains: city, mode: 'insensitive' } : undefined,
                 status: status ? status : undefined,
             },
-            include: { user: true, providerProfiles: true },
+            include: { 
+                user: true, 
+                providerProfiles: true, 
+                categories: true, 
+                items: true 
+            },
             orderBy: { createdAt: 'desc' },
         });
     }
@@ -676,7 +681,13 @@ export class AdminService {
     async getServiceProviderById(id: string) {
         const provider = await this.prisma.serviceProvider.findUnique({
             where: { id },
-            include: { user: true, providerProfiles: true, availabilities: true },
+            include: { 
+                user: true, 
+                providerProfiles: true, 
+                availabilities: true, 
+                categories: true, 
+                items: true 
+            },
         });
         if (!provider) throw new NotFoundException('Service provider not found');
         return provider;
@@ -695,8 +706,14 @@ export class AdminService {
                 city: data.city,
                 yearsOfExperience: data.yearsOfExperience ?? 0,
                 status: data.status ?? 'PENDING',
+                categories: data.categoryIds ? {
+                    connect: data.categoryIds.map(id => ({ id }))
+                } : undefined,
+                items: data.itemIds ? {
+                    connect: data.itemIds.map(id => ({ id }))
+                } : undefined,
             },
-            include: { user: true },
+            include: { user: true, categories: true, items: true },
         });
     }
 
@@ -712,8 +729,14 @@ export class AdminService {
                 city: data.city,
                 yearsOfExperience: data.yearsOfExperience,
                 status: data.status,
+                categories: data.categoryIds ? {
+                    set: data.categoryIds.map(id => ({ id }))
+                } : undefined,
+                items: data.itemIds ? {
+                    set: data.itemIds.map(id => ({ id }))
+                } : undefined,
             },
-            include: { user: true },
+            include: { user: true, categories: true, items: true },
         });
     }
 

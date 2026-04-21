@@ -5,8 +5,9 @@ import { BookingStatus, Prisma } from '@prisma/client';
 @Injectable()
 export class BookingsService {
   constructor(private prisma: PrismaService) { }
-
+  debugger;
   async createBooking(userId: string, serviceId: string, date: Date, addressId: string, bookingType: string) {
+    console.warn(serviceId, "service id ###############");
     let service = await this.prisma.serviceItem.findUnique({ where: { id: serviceId } });
     if (!service && serviceId.startsWith('svc_')) {
       let category = await this.prisma.serviceCategory.findFirst({});
@@ -54,6 +55,7 @@ export class BookingsService {
     if (booking.addressId) {
       const custAddr = await this.prisma.customerAddress.findUnique({ where: { id: booking.addressId } });
       if (custAddr) {
+        console.log(custAddr, "cust addr ############### 1111111");
         customerLat = custAddr.latitude;
         customerLng = custAddr.longitude;
       }
@@ -61,10 +63,13 @@ export class BookingsService {
 
     const RADIUS_KM = 10;
 
-    // Get all online providers not already excluded
+    const serviceItem = await this.prisma.serviceItem.findUnique({ where: { id: booking.serviceId } });
+    const targetCategoryId = serviceItem?.categoryId;
+
+    // Get all online providers not already excluded, including their skills (profiles)
     const candidates = await this.prisma.serviceProvider.findMany({
       where: {
-        status: 'ACTIVE',
+        status: { in: ['ACTIVE', 'ONBOARDING_COMPLETED'] }, // Be more inclusive during testing/rollout
         id: { notIn: excludeProviderIds },
         availabilities: { some: { is_online: true } },
       },
@@ -72,34 +77,79 @@ export class BookingsService {
         user: true,
         availabilities: true,
         providerAddresses: true,
+        providerProfiles: true,
+        categories: true,
+        items: true,
       },
     });
 
+    console.log(`[Algorithm] Found ${candidates.length} online candidate(s) globally for booking ${bookingId}`);
+
     const endTime = new Date(booking.date);
-    endTime.setMinutes(endTime.getMinutes() + 2); // 2-minute window to accept
+    endTime.setMinutes(endTime.getMinutes() + 5); // 5-minute window to accept
 
-    // Filter providers within 10km radius using live location or saved address
-    const nearbyProviders = candidates.filter((provider) => {
-      const avail = provider.availabilities.find((a) => a.is_online);
-      if (!avail) return false;
+    const findNearby = (radiusKm: number) => {
+      return candidates.filter((provider) => {
+        // 1. Skill check
+        if (targetCategoryId) {
+          // Check explicit item mapping first
+          const hasItem = provider.items.some(item => item.id === booking.serviceId);
+          if (hasItem) return true;
 
-      // Prefer live GPS ping on availability record
-      if (avail.currentLatitude !== null && avail.currentLongitude !== null) {
-        const dist = this.calculateDistance(customerLat, customerLng, avail.currentLatitude!, avail.currentLongitude!);
-        return dist <= RADIUS_KM;
-      }
+          // Check explicit category mapping
+          const hasCategory = provider.categories.some(cat => cat.id === targetCategoryId);
+          if (hasCategory) return true;
 
-      // Fall back to the nearest saved provider address
-      for (const addr of provider.providerAddresses) {
-        const dist = this.calculateDistance(customerLat, customerLng, addr.latitude, addr.longitude);
-        if (dist <= RADIUS_KM) return true;
-      }
+          // Fallback: Check older Profile services string array
+          const profile = provider.providerProfiles[0];
+          const hasSkill = profile?.services.includes(targetCategoryId);
+          if (!hasSkill) {
+            console.log(`[Algorithm] Provider ${provider.name} skipped: Missing skill for category ${targetCategoryId}.`);
+            return false;
+          }
+        }
 
-      return false;
-    });
+        const avail = provider.availabilities.find((a) => a.is_online);
+        if (!avail) return false;
+
+        let providerLat: number | null = avail.currentLatitude;
+        let providerLng: number | null = avail.currentLongitude;
+
+        // 2. Proximity check
+        // Prefer live GPS ping on availability record
+        if (providerLat !== null && providerLng !== null) {
+          const dist = this.calculateDistance(customerLat, customerLng, providerLat, providerLng);
+          const matched = dist <= radiusKm;
+          console.log(`[Algorithm] Provider ${provider.name} live distance: ${dist.toFixed(2)}km (lat: ${providerLat}, lng: ${providerLng}). Radius ${radiusKm}km match: ${matched}`);
+          return matched;
+        }
+
+        // Fall back to the nearest saved provider address
+        if (provider.providerAddresses.length > 0) {
+          for (const addr of provider.providerAddresses) {
+            const dist = this.calculateDistance(customerLat, customerLng, addr.latitude, addr.longitude);
+            if (dist <= radiusKm) {
+              console.log(`[Algorithm] Provider ${provider.name} address match: ${dist.toFixed(2)}km.`);
+              return true;
+            }
+          }
+        }
+
+        console.log(`[Algorithm] Provider ${provider.name} skipped: No coordinates within ${radiusKm}km of customer (lat: ${customerLat}, lng: ${customerLng}).`);
+        return false;
+      });
+    };
+
+    let nearbyProviders = findNearby(10);
+
+    // Rollout Fallback: If no providers found in 10km, try 50km
+    if (nearbyProviders.length === 0) {
+      console.log(`[Algorithm] No providers in 10km. Trying 50km fallback...`);
+      nearbyProviders = findNearby(50);
+    }
 
     if (nearbyProviders.length === 0) {
-      console.warn(`[Algorithm] No providers within ${RADIUS_KM}km for booking ${bookingId}.`);
+      console.warn(`[Algorithm] No skilled providers within 50km for booking ${bookingId}. (Customer lat: ${customerLat}, lng: ${customerLng})`);
       return;
     }
 
@@ -290,11 +340,11 @@ export class BookingsService {
     let destLat = 12.9716;
     let destLng = 77.5946;
     if (booking.addressId) {
-       const address = await this.prisma.customerAddress.findUnique({ where: { id: booking.addressId }});
-       if (address) {
-          destLat = address.latitude;
-          destLng = address.longitude;
-       }
+      const address = await this.prisma.customerAddress.findUnique({ where: { id: booking.addressId } });
+      if (address) {
+        destLat = address.latitude;
+        destLng = address.longitude;
+      }
     }
 
     const ping = await this.prisma.locationPing.findFirst({
@@ -305,11 +355,11 @@ export class BookingsService {
     let currentLat = 12.9716 + (Math.random() - 0.5) * 0.01;
     let currentLng = 77.5946 + (Math.random() - 0.5) * 0.01;
     let accuracy = 20;
-    
+
     if (ping) {
-       currentLat = ping.latitude;
-       currentLng = ping.longitude;
-       accuracy = 10;
+      currentLat = ping.latitude;
+      currentLng = ping.longitude;
+      accuracy = 10;
     }
 
     const distanceKm = this.calculateDistance(destLat, destLng, currentLat, currentLng);
