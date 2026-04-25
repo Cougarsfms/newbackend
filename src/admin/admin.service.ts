@@ -718,6 +718,7 @@ export class AdminService {
     }
 
     async updateServiceProvider(id: string, data: Partial<CreateServiceProviderDto>) {
+        console.log(`[AdminService] Updating provider ${id} with data:`, JSON.stringify(data, null, 2));
         const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
         if (!provider) throw new NotFoundException('Service provider not found');
 

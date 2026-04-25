@@ -504,6 +504,7 @@ export class AdminController {
         @Param('id') id: string,
         @Body() body: Partial<CreateServiceProviderDto>,
     ) {
+        console.log(`[AdminController] PATCH service-providers/${id} body:`, JSON.stringify(body, null, 2));
         return this.adminService.updateServiceProvider(id, body);
     }
 

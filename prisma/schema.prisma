@@ -88,6 +88,7 @@ model Booking {
 
   addressId   String?
   bookingType String  @default("Instant")
+  durationMinutes Int @default(60)
 
   cancellationReason String?
   cancelledAt        DateTime?

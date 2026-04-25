@@ -13,4 +13,11 @@ export class RegisterProviderDto {
         type: [String]
     })
     serviceCategories: string[];
+
+    @ApiProperty({
+        description: 'Preferred service item IDs',
+        example: ['pipe-repair', 'wiring'],
+        type: [String]
+    })
+    serviceItems?: string[];
 }

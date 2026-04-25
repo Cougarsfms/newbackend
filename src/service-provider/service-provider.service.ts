@@ -53,7 +53,7 @@ export class ServiceProviderService {
             },
         });
 
-        // 3. Create Provider Profile with services
+        // 3. Create Provider Profile with services (legacy storage)
         await this.prisma.providerProfile.create({
             data: {
                 provider_id: provider.id,
@@ -61,6 +61,28 @@ export class ServiceProviderService {
                 experiences: [],
             },
         });
+
+        // 3.1 Sync explicit many-to-many relations for Admin UI
+        const validCategoryIds = (dto.serviceCategories || []).filter(id => 
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+        );
+        const validItemIds = (dto.serviceItems || []).filter(id => 
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+        );
+
+        if (validCategoryIds.length > 0 || validItemIds.length > 0) {
+            await this.prisma.serviceProvider.update({
+                where: { id: provider.id },
+                data: {
+                    categories: validCategoryIds.length > 0 ? {
+                        connect: validCategoryIds.map(id => ({ id }))
+                    } : undefined,
+                    items: validItemIds.length > 0 ? {
+                        connect: validItemIds.map(id => ({ id }))
+                    } : undefined
+                }
+            });
+        }
 
         // 4. Initialize Wallet
         await this.prisma.spWallet.create({
@@ -136,11 +158,14 @@ export class ServiceProviderService {
 
         const token = this.jwtService.sign(payload);
 
+        // Fetch full profile to include categories/items
+        const fullProfile = await this.getProfile(providerId);
+
         return {
             message: 'Login successful',
             token,
             providerId,
-            user,
+            user: fullProfile,
         };
     }
 
@@ -151,6 +176,8 @@ export class ServiceProviderService {
                 providerProfiles: true,
                 availabilities: true,
                 spWallets: true,
+                categories: true,
+                items: true,
             },
         });
         if (!provider) throw new NotFoundException('Provider not found');
@@ -192,6 +219,34 @@ export class ServiceProviderService {
             }
         }
 
+        console.log(`[ServiceProviderService] Updating profile for provider ${id}`, {
+            categoryIds: dto.categoryIds,
+            itemIds: dto.itemIds,
+            hasServiceCategories: !!dto.serviceCategories
+        });
+
+        // Filter out any non-UUID strings (e.g. legacy slugs like 'sweep') to prevent Prisma errors
+        const validCategoryIds = (dto.categoryIds || []).filter(id => 
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+        );
+        const validItemIds = (dto.itemIds || []).filter(id => 
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+        );
+
+        // Sync explicit many-to-many relations for Admin UI
+        if (validCategoryIds.length > 0 || validItemIds.length > 0) {
+            await this.prisma.serviceProvider.update({
+                where: { id },
+                data: {
+                    categories: validCategoryIds.length > 0 ? {
+                        set: validCategoryIds.map(cid => ({ id: cid }))
+                    } : undefined,
+                    items: validItemIds.length > 0 ? {
+                        set: validItemIds.map(iid => ({ id: iid }))
+                    } : undefined
+                }
+            });
+        }
         return this.getProfile(id);
     }
 

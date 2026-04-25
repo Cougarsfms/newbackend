@@ -16,10 +16,22 @@ export class BookingsController {
     @Body('phoneNumber') phoneNumber: string,
     @Body('addressId') addressId: string,
     @Body('type') type: string,
+    @Body('durationMinutes') durationMinutes?: number,
+    @Body('endDate') endDate?: string,
+    @Body('dates') dates?: string[],
   ) {
     // Mock user lookup/create from token logic since we don't have full JWT middleware yet
     const user = await this.usersService.findOrCreate(phoneNumber);
-    return this.bookingsService.createBooking(user.id, serviceId, new Date(date), addressId, type);
+    return this.bookingsService.createBooking({
+      userId: user.id,
+      serviceId,
+      date: new Date(date),
+      addressId,
+      bookingType: type,
+      durationMinutes,
+      endDate: endDate ? new Date(endDate) : undefined,
+      dates: dates ? dates.map(d => new Date(d)) : undefined,
+    });
   }
 
   @Get('user/:phone')

@@ -10,6 +10,11 @@ export class ServicesController {
     return this.servicesService.findAllCategories();
   }
 
+  @Get('items')
+  async getItems() {
+    return this.servicesService.findAllItems();
+  }
+
   @Get('search')
   async search(@Query('q') query: string) {
     return this.servicesService.searchItems(query || '');

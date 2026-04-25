@@ -1,13 +1,24 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { BookingStatus, Prisma } from '@prisma/client';
+import { BookingStatus, Prisma, Booking } from '@prisma/client';
 
 @Injectable()
 export class BookingsService {
   constructor(private prisma: PrismaService) { }
-  debugger;
-  async createBooking(userId: string, serviceId: string, date: Date, addressId: string, bookingType: string) {
-    console.warn(serviceId, "service id ###############");
+
+  async createBooking(params: {
+    userId: string;
+    serviceId: string;
+    date: Date;
+    addressId: string;
+    bookingType: string;
+    durationMinutes?: number;
+    endDate?: Date;
+    dates?: Date[];
+  }) {
+    const { userId, serviceId, date, addressId, bookingType, durationMinutes = 60, endDate, dates } = params;
+    console.warn("Create Booking Entry:", { userId, serviceId, date, datesCount: dates?.length, endDate });
+    
     let service = await this.prisma.serviceItem.findUnique({ where: { id: serviceId } });
     if (!service && serviceId.startsWith('svc_')) {
       let category = await this.prisma.serviceCategory.findFirst({});
@@ -23,6 +34,62 @@ export class BookingsService {
 
     const startOTP = Math.floor(1000 + Math.random() * 9000).toString();
 
+    // 1. If specific dates array is provided (Custom Selection)
+    if (dates && dates.length > 0) {
+      const bookings: Booking[] = [];
+      for (const d of dates) {
+        const booking = await this.prisma.booking.create({
+          data: {
+            userId,
+            serviceId,
+            date: new Date(d),
+            totalAmount: service.price,
+            status: BookingStatus.PENDING,
+            addressId,
+            bookingType: 'Scheduled',
+            durationMinutes,
+            startOTP,
+          },
+        });
+        bookings.push(booking);
+        // Start auto assignment logic asynchronously
+        this.assignProviderToBooking(booking.id).catch(e => console.error(e));
+      }
+      return bookings;
+    }
+
+    // 2. If endDate is provided (Range Selection)
+    if (endDate) {
+      const bookings: Booking[] = [];
+      let currentDate = new Date(date);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+
+      while (currentDate <= end) {
+        const booking = await this.prisma.booking.create({
+          data: {
+            userId,
+            serviceId,
+            date: new Date(currentDate),
+            totalAmount: service.price,
+            status: BookingStatus.PENDING,
+            addressId,
+            bookingType: 'Scheduled',
+            durationMinutes,
+            startOTP,
+          },
+        });
+        bookings.push(booking);
+        
+        // Start assignment for each
+        this.assignProviderToBooking(booking.id).catch(e => console.error(e));
+        
+        // Move to next day
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+      return bookings;
+    }
+
     const booking = await this.prisma.booking.create({
       data: {
         userId,
@@ -32,6 +99,7 @@ export class BookingsService {
         status: BookingStatus.PENDING,
         addressId,
         bookingType,
+        durationMinutes,
         startOTP,
       },
       include: {

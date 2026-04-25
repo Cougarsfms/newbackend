@@ -15,4 +15,10 @@ export class UpdateProfileDto {
 
     @ApiProperty({ description: 'Years of experience (numeric)', required: false })
     yearsOfExperience?: number;
+
+    @ApiProperty({ description: 'Explicit Category IDs', required: false, type: [String] })
+    categoryIds?: string[];
+
+    @ApiProperty({ description: 'Explicit Item IDs', required: false, type: [String] })
+    itemIds?: string[];
 }

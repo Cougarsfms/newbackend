@@ -11,6 +11,10 @@ export class ServicesService {
     });
   }
 
+  async findAllItems() {
+    return this.prisma.serviceItem.findMany();
+  }
+
   async searchItems(query: string) {
     return this.prisma.serviceItem.findMany({
       where: {
