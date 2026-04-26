@@ -4,6 +4,8 @@ import { User, Prisma, Role, BookingStatus, Booking } from '@prisma/client';
 import { CreatePricingRuleDto } from './dto/create-pricing-rule.dto';
 import { CreateSurgeRuleDto } from './dto/create-surge-rule.dto';
 import { CreateServiceProviderDto } from './dto/create-service-provider.dto';
+import { CreateServiceCategoryDto } from './dto/create-service-category.dto';
+import { CreateServiceItemDto } from './dto/create-service-item.dto';
 
 @Injectable()
 export class AdminService {
@@ -769,6 +771,53 @@ export class AdminService {
         const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
         if (!provider) throw new NotFoundException('Service provider not found');
         return this.prisma.serviceProvider.delete({ where: { id } });
+    }
+
+    // ==================== SERVICE CATALOG MANAGEMENT ====================
+
+    async createServiceCategory(data: CreateServiceCategoryDto) {
+        return this.prisma.serviceCategory.create({
+            data: {
+                name: data.name,
+                icon: data.icon,
+                active: data.active ?? true,
+            },
+        });
+    }
+
+    async getServiceCategories(includeItems = false) {
+        return this.prisma.serviceCategory.findMany({
+            include: {
+                items: includeItems,
+            },
+            orderBy: { name: 'asc' },
+        });
+    }
+
+    async createServiceItem(data: CreateServiceItemDto) {
+        // Verify category exists
+        const category = await this.prisma.serviceCategory.findUnique({ where: { id: data.categoryId } });
+        if (!category) throw new NotFoundException(`Category with ID ${data.categoryId} not found`);
+
+        return this.prisma.serviceItem.create({
+            data: {
+                name: data.name,
+                description: data.description,
+                price: new Prisma.Decimal(data.price),
+                categoryId: data.categoryId,
+                durationMinutes: data.durationMinutes ?? 60,
+            },
+        });
+    }
+
+    async getServiceItems(categoryId?: string) {
+        return this.prisma.serviceItem.findMany({
+            where: categoryId ? { categoryId } : undefined,
+            include: {
+                category: true,
+            },
+            orderBy: { name: 'asc' },
+        });
     }
 }
 

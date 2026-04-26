@@ -10,6 +10,8 @@ import { CreatePricingRuleDto } from './dto/create-pricing-rule.dto';
 import { CreateSurgeRuleDto } from './dto/create-surge-rule.dto';
 import { BookingStatus } from '@prisma/client';
 import { CreateServiceProviderDto } from './dto/create-service-provider.dto';
+import { CreateServiceCategoryDto } from './dto/create-service-category.dto';
+import { CreateServiceItemDto } from './dto/create-service-item.dto';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -536,6 +538,55 @@ export class AdminController {
     @ApiResponse({ status: 404, description: 'Service provider not found' })
     async deleteServiceProvider(@Param('id') id: string) {
         return this.adminService.deleteServiceProvider(id);
+    }
+
+    // ==================== SERVICE CATALOG MANAGEMENT ====================
+
+    @Get('service-categories')
+    @ApiOperation({
+        summary: 'Get all service categories',
+        description: 'Retrieve a list of all service categories',
+        tags: ['Service Catalog'],
+    })
+    @ApiResponse({ status: 200, description: 'Service categories retrieved successfully' })
+    async getServiceCategories(@Query('includeItems') includeItems?: string) {
+        return this.adminService.getServiceCategories(includeItems === 'true');
+    }
+
+    @Post('service-categories')
+    @ApiOperation({
+        summary: 'Create service category',
+        description: 'Create a new service category',
+        tags: ['Service Catalog'],
+    })
+    @ApiBody({ type: CreateServiceCategoryDto })
+    @ApiResponse({ status: 201, description: 'Service category created successfully' })
+    async createServiceCategory(@Body() body: CreateServiceCategoryDto) {
+        return this.adminService.createServiceCategory(body);
+    }
+
+    @Get('service-items')
+    @ApiOperation({
+        summary: 'Get all service items',
+        description: 'Retrieve a list of all service items with optional category filter',
+        tags: ['Service Catalog'],
+    })
+    @ApiQuery({ name: 'categoryId', required: false, description: 'Filter by category ID' })
+    @ApiResponse({ status: 200, description: 'Service items retrieved successfully' })
+    async getServiceItems(@Query('categoryId') categoryId?: string) {
+        return this.adminService.getServiceItems(categoryId);
+    }
+
+    @Post('service-items')
+    @ApiOperation({
+        summary: 'Create service item',
+        description: 'Create a new service item under a category',
+        tags: ['Service Catalog'],
+    })
+    @ApiBody({ type: CreateServiceItemDto })
+    @ApiResponse({ status: 201, description: 'Service item created successfully' })
+    async createServiceItem(@Body() body: CreateServiceItemDto) {
+        return this.adminService.createServiceItem(body);
     }
 }
 

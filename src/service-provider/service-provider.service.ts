@@ -63,10 +63,10 @@ export class ServiceProviderService {
         });
 
         // 3.1 Sync explicit many-to-many relations for Admin UI
-        const validCategoryIds = (dto.serviceCategories || []).filter(id => 
+        const validCategoryIds = (dto.serviceCategories || []).filter(id =>
             /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
         );
-        const validItemIds = (dto.serviceItems || []).filter(id => 
+        const validItemIds = (dto.serviceItems || []).filter(id =>
             /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
         );
 
@@ -226,10 +226,10 @@ export class ServiceProviderService {
         });
 
         // Filter out any non-UUID strings (e.g. legacy slugs like 'sweep') to prevent Prisma errors
-        const validCategoryIds = (dto.categoryIds || []).filter(id => 
+        const validCategoryIds = (dto.categoryIds || []).filter(id =>
             /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
         );
-        const validItemIds = (dto.itemIds || []).filter(id => 
+        const validItemIds = (dto.itemIds || []).filter(id =>
             /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
         );
 
@@ -446,7 +446,7 @@ export class ServiceProviderService {
                     if (custAddr) { addressStr = custAddr.address; lat = custAddr.latitude; lng = custAddr.longitude; }
                 }
                 const svc = await this.prisma.serviceItem.findUnique({ where: { id: b?.serviceId ?? '' } });
-                
+
                 enriched.push({
                     id: sp.id,
                     bookingId: b?.id,
@@ -489,7 +489,7 @@ export class ServiceProviderService {
         // If booking was already accepted by another provider, reject this attempt
         if (job.booking_id) {
             const parentBooking = await this.prisma.booking.findUnique({ where: { id: job.booking_id } });
-            
+
             if (parentBooking) {
                 // If the booking is already CONFIRMED but by someone else, block it.
                 // If it was manually assigned to THIS provider by the admin, parentBooking.status will be CONFIRMED
@@ -497,7 +497,7 @@ export class ServiceProviderService {
                 if (parentBooking.status === 'CONFIRMED' && parentBooking.providerId !== id) {
                     throw new BadRequestException('This job has already been accepted by another provider');
                 }
-                
+
                 // If it's already in progress or completed, definitely block.
                 if (['IN_PROGRESS', 'COMPLETED', 'CANCELLED'].includes(parentBooking.status)) {
                     throw new BadRequestException('This job is no longer available');
@@ -516,8 +516,8 @@ export class ServiceProviderService {
         if (updatedSp.booking_id) {
             // Accept: mark the parent booking as CONFIRMED with this provider
             await this.prisma.booking.update({
-               where: { id: updatedSp.booking_id },
-               data: { status: 'CONFIRMED', providerId: id }
+                where: { id: updatedSp.booking_id },
+                data: { status: 'CONFIRMED', providerId: id }
             });
 
             // Auto-close all OTHER pending SpBookings for the same parent booking
@@ -532,11 +532,11 @@ export class ServiceProviderService {
             console.log(`[Algorithm] Booking ${updatedSp.booking_id} accepted by ${provider.name}. Closed ${cancelled.count} other pending notification(s).`);
             console.log(`[Notification] To Customer: Your booking has been accepted by ${provider.name}.`);
         }
-        
+
         // Enrich returning object for the app
-        const b = updatedSp.booking_id ? await this.prisma.booking.findUnique({ 
-            where: { id: updatedSp.booking_id }, 
-            include: { user: true, service: true } 
+        const b = updatedSp.booking_id ? await this.prisma.booking.findUnique({
+            where: { id: updatedSp.booking_id },
+            include: { user: true, service: true }
         }) : null;
 
         let address = 'N/A';
@@ -572,7 +572,7 @@ export class ServiceProviderService {
         });
 
         if (updated.booking_id) {
-            const booking = await this.prisma.booking.findUnique({ where: { id: updated.booking_id }});
+            const booking = await this.prisma.booking.findUnique({ where: { id: updated.booking_id } });
             // If the booking was confirmed (manual assignment) or pending, reset it for reassignment
             if (booking && (booking.status === 'PENDING' || booking.status === 'CONFIRMED')) {
                 // If it was manual assignment (CONFIRMED), revert to PENDING so mapping can pick it up or admin can reassign
@@ -584,10 +584,10 @@ export class ServiceProviderService {
                 }
 
                 const availableProvider = await this.prisma.serviceProvider.findFirst({
-                    where: { 
-                      status: 'ACTIVE', 
-                      id: { not: id }, 
-                      availabilities: { some: { is_online: true } } 
+                    where: {
+                        status: 'ACTIVE',
+                        id: { not: id },
+                        availabilities: { some: { is_online: true } }
                     }
                 });
                 if (availableProvider) {
@@ -627,7 +627,7 @@ export class ServiceProviderService {
 
         if (!spBooking) throw new NotFoundException('Job not found');
         if (!spBooking.booking) throw new BadRequestException('Parent booking not found');
-        
+        console.log(spBooking.booking.startOTP, otp);
         if (spBooking.booking.startOTP !== otp) {
             throw new BadRequestException('Invalid OTP provided');
         }
@@ -779,9 +779,9 @@ export class ServiceProviderService {
 
         // 2. Log location ping if there's an active booking
         const booking = await this.prisma.spBooking.findFirst({
-            where: { 
-               provider_id: id, 
-               status: { in: ['ACCEPTED', 'IN_PROGRESS', 'ARRIVED'] } 
+            where: {
+                provider_id: id,
+                status: { in: ['ACCEPTED', 'IN_PROGRESS', 'ARRIVED'] }
             },
         });
 
@@ -841,9 +841,9 @@ export class ServiceProviderService {
 
     async getActiveJob(id: string) {
         const job = await this.prisma.spBooking.findFirst({
-            where: { 
-                provider_id: id, 
-                status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] } 
+            where: {
+                provider_id: id,
+                status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
             },
             include: { booking: { include: { user: true, service: true } } }
         });
