@@ -19,6 +19,7 @@ export class BookingsController {
     @Body('durationMinutes') durationMinutes?: number,
     @Body('endDate') endDate?: string,
     @Body('dates') dates?: string[],
+    @Body('couponCode') couponCode?: string,
   ) {
     // Mock user lookup/create from token logic since we don't have full JWT middleware yet
     const user = await this.usersService.findOrCreate(phoneNumber);
@@ -31,7 +32,13 @@ export class BookingsController {
       durationMinutes,
       endDate: endDate ? new Date(endDate) : undefined,
       dates: dates ? dates.map(d => new Date(d)) : undefined,
+      couponCode,
     });
+  }
+
+  @Post('validate-coupon')
+  async validateCoupon(@Body('code') code: string) {
+    return this.bookingsService.validateCoupon(code);
   }
 
   @Get('user/:phone')

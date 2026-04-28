@@ -96,6 +96,24 @@ model Booking {
   paymentStatus String    @default("PENDING") // PENDING, PAID, REFUNDED
   payments      Payment[]
   spBookings    SpBooking[]
+
+  couponId       String?
+  coupon         Coupon?  @relation(fields: [couponId], references: [id])
+  discountAmount Decimal? @default(0)
+}
+
+model Coupon {
+  id              String   @id @default(uuid())
+  code            String   @unique
+  discountPercent Decimal
+  maxDiscount     Decimal?
+  expiryDate      DateTime
+  isActive        Boolean  @default(true)
+  usageLimit      Int      @default(0) // 0 means unlimited
+  usedCount       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  bookings        Booking[]
 }
 
 model PricingRule {

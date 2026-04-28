@@ -12,6 +12,7 @@ import { BookingStatus } from '@prisma/client';
 import { CreateServiceProviderDto } from './dto/create-service-provider.dto';
 import { CreateServiceCategoryDto } from './dto/create-service-category.dto';
 import { CreateServiceItemDto } from './dto/create-service-item.dto';
+import { CreateCouponDto } from './dto/create-coupon.dto';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -587,6 +588,43 @@ export class AdminController {
     @ApiResponse({ status: 201, description: 'Service item created successfully' })
     async createServiceItem(@Body() body: CreateServiceItemDto) {
         return this.adminService.createServiceItem(body);
+    }
+
+    // ==================== COUPON MANAGEMENT ====================
+
+    @Post('coupons')
+    @ApiOperation({
+        summary: 'Create discount coupon',
+        description: 'Create a new discount coupon with percentage and expiry',
+        tags: ['Coupon Management'],
+    })
+    @ApiBody({ type: CreateCouponDto })
+    @ApiResponse({ status: 201, description: 'Coupon created successfully' })
+    async createCoupon(@Body() body: CreateCouponDto) {
+        return this.adminService.createCoupon(body);
+    }
+
+    @Get('coupons')
+    @ApiOperation({
+        summary: 'Get all coupons',
+        description: 'Retrieve a list of all discount coupons',
+        tags: ['Coupon Management'],
+    })
+    @ApiResponse({ status: 200, description: 'Coupons retrieved successfully' })
+    async getCoupons() {
+        return this.adminService.getCoupons();
+    }
+
+    @Delete('coupons/:id')
+    @ApiOperation({
+        summary: 'Delete coupon',
+        description: 'Permanently delete a discount coupon by ID',
+        tags: ['Coupon Management'],
+    })
+    @ApiParam({ name: 'id', description: 'Coupon ID' })
+    @ApiResponse({ status: 200, description: 'Coupon deleted successfully' })
+    async deleteCoupon(@Param('id') id: string) {
+        return this.adminService.deleteCoupon(id);
     }
 }
 

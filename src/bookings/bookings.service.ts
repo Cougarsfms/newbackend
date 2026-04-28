@@ -15,8 +15,9 @@ export class BookingsService {
     durationMinutes?: number;
     endDate?: Date;
     dates?: Date[];
+    couponCode?: string;
   }) {
-    const { userId, serviceId, date, addressId, bookingType, durationMinutes = 60, endDate, dates } = params;
+    const { userId, serviceId, date, addressId, bookingType, durationMinutes = 60, endDate, dates, couponCode } = params;
     console.warn("Create Booking Entry:", { userId, serviceId, date, datesCount: dates?.length, endDate });
     
     let service = await this.prisma.serviceItem.findUnique({ where: { id: serviceId } });
@@ -34,6 +35,31 @@ export class BookingsService {
 
     const startOTP = Math.floor(1000 + Math.random() * 9000).toString();
 
+    let couponId = null;
+    let discountAmount = 0;
+    let finalTotalAmount = Number(service.price);
+
+    if (couponCode) {
+      try {
+        const coupon = await this.validateCoupon(couponCode);
+        discountAmount = (finalTotalAmount * Number(coupon.discountPercent)) / 100;
+        if (coupon.maxDiscount && discountAmount > Number(coupon.maxDiscount)) {
+          discountAmount = Number(coupon.maxDiscount);
+        }
+        finalTotalAmount -= discountAmount;
+        couponId = coupon.id;
+        
+        // Update coupon used count
+        await this.prisma.coupon.update({
+          where: { id: coupon.id },
+          data: { usedCount: { increment: 1 } }
+        });
+      } catch (e) {
+        console.error("Coupon validation failed:", e.message);
+        // Optionally throw error if user explicitly wanted to apply coupon
+      }
+    }
+
     // 1. If specific dates array is provided (Custom Selection)
     if (dates && dates.length > 0) {
       const bookings: Booking[] = [];
@@ -43,12 +69,14 @@ export class BookingsService {
             userId,
             serviceId,
             date: new Date(d),
-            totalAmount: service.price,
+            totalAmount: finalTotalAmount,
             status: BookingStatus.PENDING,
             addressId,
             bookingType: 'Scheduled',
             durationMinutes,
             startOTP,
+            couponId,
+            discountAmount,
           },
         });
         bookings.push(booking);
@@ -71,12 +99,14 @@ export class BookingsService {
             userId,
             serviceId,
             date: new Date(currentDate),
-            totalAmount: service.price,
+            totalAmount: finalTotalAmount,
             status: BookingStatus.PENDING,
             addressId,
             bookingType: 'Scheduled',
             durationMinutes,
             startOTP,
+            couponId,
+            discountAmount,
           },
         });
         bookings.push(booking);
@@ -95,12 +125,14 @@ export class BookingsService {
         userId,
         serviceId,
         date,
-        totalAmount: service.price,
+        totalAmount: finalTotalAmount,
         status: BookingStatus.PENDING,
         addressId,
         bookingType,
         durationMinutes,
         startOTP,
+        couponId,
+        discountAmount,
       },
       include: {
         service: true,
@@ -317,13 +349,20 @@ export class BookingsService {
     return { id: bookingId, status: 'completed' };
   }
   async payBooking(bookingId: string) {
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    if (!booking) throw new Error('Booking not found');
+    
+    if (booking.paymentStatus === 'PAID') {
+      return booking;
+    }
+
     return this.prisma.booking.update({
       where: { id: bookingId },
       data: {
         paymentStatus: 'PAID',
         payments: {
           create: {
-            amount: 0, // Should be fetched from booking.totalAmount but requires finding first.
+            amount: booking.totalAmount,
             status: 'PAID',
             method: 'TEST_PAY'
           }
@@ -454,5 +493,29 @@ export class BookingsService {
       Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c; // Distance in km
+  }
+
+  async validateCoupon(code: string) {
+    const coupon = await this.prisma.coupon.findUnique({
+      where: { code: code.toUpperCase() },
+    });
+
+    if (!coupon) {
+      throw new Error('Invalid coupon code');
+    }
+
+    if (!coupon.isActive) {
+      throw new Error('Coupon is inactive');
+    }
+
+    if (new Date() > coupon.expiryDate) {
+      throw new Error('Coupon has expired');
+    }
+
+    if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
+      throw new Error('Coupon usage limit reached');
+    }
+
+    return coupon;
   }
 }

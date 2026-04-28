@@ -6,6 +6,7 @@ import { CreateSurgeRuleDto } from './dto/create-surge-rule.dto';
 import { CreateServiceProviderDto } from './dto/create-service-provider.dto';
 import { CreateServiceCategoryDto } from './dto/create-service-category.dto';
 import { CreateServiceItemDto } from './dto/create-service-item.dto';
+import { CreateCouponDto } from './dto/create-coupon.dto';
 
 @Injectable()
 export class AdminService {
@@ -817,6 +818,33 @@ export class AdminService {
                 category: true,
             },
             orderBy: { name: 'asc' },
+        });
+    }
+
+    // ==================== COUPON MANAGEMENT ====================
+
+    async createCoupon(data: CreateCouponDto) {
+        return this.prisma.coupon.create({
+            data: {
+                code: data.code.toUpperCase(),
+                discountPercent: data.discountPercent,
+                maxDiscount: data.maxDiscount,
+                expiryDate: new Date(data.expiryDate),
+                isActive: data.isActive ?? true,
+                usageLimit: data.usageLimit ?? 0,
+            },
+        });
+    }
+
+    async getCoupons() {
+        return this.prisma.coupon.findMany({
+            orderBy: { createdAt: 'desc' },
+        });
+    }
+
+    async deleteCoupon(id: string) {
+        return this.prisma.coupon.delete({
+            where: { id },
         });
     }
 }
