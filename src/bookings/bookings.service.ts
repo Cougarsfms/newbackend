@@ -35,7 +35,7 @@ export class BookingsService {
 
     const startOTP = Math.floor(1000 + Math.random() * 9000).toString();
 
-    let couponId = null;
+    let couponId: string | null = null;
     let discountAmount = 0;
     let finalTotalAmount = Number(service.price);
 

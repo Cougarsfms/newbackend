@@ -1,5 +1,5 @@
 # Use the official Node.js image as the builder
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 # Set the working directory
 WORKDIR /app
@@ -22,7 +22,7 @@ RUN npm run build
 
 # --- Stage 2: Runner ---
 # Use a smaller footprint image for production
-FROM node:18-alpine
+FROM node:20-alpine
 
 # Set the working directory
 WORKDIR /app
