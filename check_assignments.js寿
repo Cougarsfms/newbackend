@@ -1,0 +1,23 @@
+const { PrismaClient } = require('@prisma/client');
+
+async function main() {
+  const prisma = new PrismaClient();
+  try {
+    const bookingId = 'b45707c7-028d-418b-81cb-fbffcbd49fad';
+    const assignments = await prisma.spBooking.findMany({
+        where: { booking_id: bookingId },
+        include: { provider: { include: { user: true } } }
+    });
+    console.log(`--- Assignments for Booking ${bookingId} ---`);
+    assignments.forEach(a => {
+        console.log(`Provider: ${a.provider.name}`);
+        console.log(`Status: ${a.status}`);
+        console.log(`FCM: ${a.provider.user?.fcmToken ? 'Yes' : 'No'}`);
+        console.log('---');
+    });
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+main();

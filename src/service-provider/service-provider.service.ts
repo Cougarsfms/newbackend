@@ -8,13 +8,35 @@ import { LocationUpdateDto } from './dto/location-update.dto';
 import { PayoutRequestDto } from './dto/payout-request.dto';
 import { JobActionDto } from './dto/job-action.dto';
 import { Role } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class ServiceProviderService {
     constructor(
         private prisma: PrismaService,
-        private jwtService: JwtService
+        private jwtService: JwtService,
+        private notifications: NotificationsService
     ) { }
+
+    private async notifyCustomer(bookingId: string, title: string, body: string, status: string, extraData: any = {}) {
+        try {
+            const booking = await this.prisma.booking.findUnique({
+                where: { id: bookingId },
+                include: { user: true }
+            });
+
+            if (booking?.user?.fcmToken) {
+                await this.notifications.sendPushNotification(
+                    booking.user.fcmToken,
+                    title,
+                    body,
+                    { bookingId, status, type: 'BOOKING_UPDATE', ...extraData }
+                );
+            }
+        } catch (e) {
+            console.error('[ServiceProviderService] Failed to notify customer:', e);
+        }
+    }
 
     // ==================== ONBOARDING & AUTHENTICATION ====================
 
@@ -169,6 +191,38 @@ export class ServiceProviderService {
         };
     }
 
+    async updateFcmToken(id: string, fcmToken: string) {
+        if (!fcmToken) {
+            console.warn(`[ServiceProviderService] Missing FCM token for ID: ${id}`);
+            throw new BadRequestException('FCM token is required');
+        }
+
+        console.log(`[ServiceProviderService] Received FCM token update for ID: ${id}. Token: ${fcmToken.substring(0, 15)}...`);
+        const providerId = await this.resolveProviderId(id);
+        if (!providerId) {
+            console.warn(`[ServiceProviderService] Could not resolve provider ID for: ${id}`);
+            throw new NotFoundException('Provider not found');
+        }
+
+        const provider = await this.prisma.serviceProvider.findUnique({
+            where: { id: providerId },
+            select: { user_id: true }
+        });
+
+        if (!provider) {
+            console.warn(`[ServiceProviderService] Provider record missing in DB for resolved ID: ${providerId}`);
+            throw new NotFoundException('Provider not found');
+        }
+
+        await this.prisma.user.update({
+            where: { id: provider.user_id },
+            data: { fcmToken }
+        });
+
+        console.log(`[ServiceProviderService] Successfully updated FCM token for user: ${provider.user_id}`);
+        return { success: true, message: 'FCM token updated' };
+    }
+
     async getProfile(id: string) {
         const provider = await this.prisma.serviceProvider.findUnique({
             where: { id },
@@ -264,6 +318,7 @@ export class ServiceProviderService {
         return { message: 'Onboarding completed successfully' };
     }
 
+
     // ==================== KYC & VERIFICATION ====================
 
     async uploadKyc(id: string, dto: UploadKycDto) {
@@ -295,7 +350,7 @@ export class ServiceProviderService {
             data: {
                 kyc_id: kycRecord.id,
                 document_type: dto.documentType,
-                file_url: dto.fileUrl,
+                file_url: dto.fileUrl || '',
             },
         });
 
@@ -417,20 +472,29 @@ export class ServiceProviderService {
         };
     }
 
-    async getNearbyJobs(id: string) {
+    async getNearbyJobs(userIdOrProviderId: string) {
+        const id = await this.resolveProviderId(userIdOrProviderId);
+        if (!id) {
+            console.warn(`[ServiceProviderService] getNearbyJobs - Could not resolve provider for: ${userIdOrProviderId}`);
+            return [];
+        }
+
+        console.log(`[ServiceProviderService] Resolved provider ${id} for nearby jobs request`);
+
         // Only show jobs when the provider is online
         const availability = await this.prisma.availability.findFirst({
             where: { provider_id: id },
         });
 
         if (!availability?.is_online) {
+            console.log(`[ServiceProviderService] Provider ${id} is offline. Skipping job fetch.`);
             return []; // Offline providers do not receive jobs
         }
 
         // Return only jobs explicitly assigned to this provider by the mapping algorithm
         const spBookings = await this.prisma.spBooking.findMany({
             where: {
-                status: 'PENDING',
+                status: { in: ['PENDING', 'PENDING\r\n'] as any },
                 provider_id: id
             },
         });
@@ -475,16 +539,29 @@ export class ServiceProviderService {
                 });
             }
         }
+        if (enriched.length > 0) {
+            console.log(`[ServiceProviderService] Found ${enriched.length} nearby jobs for provider ${id}`);
+        }
         return enriched;
     }
 
-    async acceptJob(id: string, jobId: string) {
+    async acceptJob(userIdOrProviderId: string, jobId: string) {
+        const id = await this.resolveProviderId(userIdOrProviderId);
+        if (!id) throw new NotFoundException('Provider not found');
+
+        console.log(`[ServiceProviderService] Attempting to accept job ${jobId} for provider ${id}`);
+
         const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
-        if (!provider) throw new NotFoundException('Provider not found');
+        if (!provider) throw new NotFoundException('Provider record not found');
 
         const job = await this.prisma.spBooking.findUnique({ where: { id: jobId } });
-        if (!job) throw new NotFoundException('Job not found');
-        if (job.status !== 'PENDING') throw new BadRequestException('Job already taken or cancelled');
+        if (!job) throw new NotFoundException('Job assignment not found');
+        
+        const currentStatus = job.status.trim();
+        if (currentStatus !== 'PENDING') {
+            console.warn(`[ServiceProviderService] Job ${jobId} cannot be accepted. Current status: ${currentStatus}`);
+            throw new BadRequestException('Job already taken or cancelled');
+        }
 
         // If booking was already accepted by another provider, reject this attempt
         if (job.booking_id) {
@@ -530,7 +607,9 @@ export class ServiceProviderService {
                 data: { status: 'CANCELLED' },
             });
             console.log(`[Algorithm] Booking ${updatedSp.booking_id} accepted by ${provider.name}. Closed ${cancelled.count} other pending notification(s).`);
-            console.log(`[Notification] To Customer: Your booking has been accepted by ${provider.name}.`);
+            
+            // Notify Customer
+            await this.notifyCustomer(updatedSp.booking_id, 'Job Accepted', `Your booking has been accepted by ${provider.name}.`, 'CONFIRMED');
         }
 
         // Enrich returning object for the app
@@ -565,7 +644,12 @@ export class ServiceProviderService {
         };
     }
 
-    async rejectJob(id: string, jobId: string, dto: JobActionDto) {
+    async rejectJob(userIdOrProviderId: string, jobId: string, dto: JobActionDto) {
+        const id = await this.resolveProviderId(userIdOrProviderId);
+        if (!id) throw new NotFoundException('Provider not found');
+
+        console.log(`[ServiceProviderService] Provider ${id} rejecting job ${jobId}. Reason: ${dto.reason}`);
+
         const updated = await this.prisma.spBooking.update({
             where: { id: jobId },
             data: { status: 'REJECTED' },
@@ -616,6 +700,11 @@ export class ServiceProviderService {
             where: { id: jobId },
             data: { status: 'ARRIVED' },
         });
+        
+        if (updated.booking_id) {
+            await this.notifyCustomer(updated.booking_id, 'Provider Arrived', 'Your service provider has arrived at your location.', 'ARRIVED');
+        }
+
         return { id: updated.id, status: 'arrived' };
     }
 
@@ -651,6 +740,15 @@ export class ServiceProviderService {
                 jobStartedAt: now,
             }
         });
+
+        // Notify Customer
+        await this.notifyCustomer(
+            spBooking.booking.id, 
+            'Job Started', 
+            'Your job has officially started.', 
+            'IN_PROGRESS',
+            { type: 'JOB_STARTED', startedAt: now.toISOString() }
+        );
 
         return { id: updatedSp.id, status: 'in_progress', startedAt: now };
     }
@@ -708,6 +806,9 @@ export class ServiceProviderService {
             }
         }
 
+        // Notify Customer
+        await this.notifyCustomer(targetBookingId, 'Job Ended', 'The job has been completed.', 'COMPLETED', { type: 'JOB_ENDED' });
+
         return { id: targetBookingId, status: 'completed', endedAt: now };
     }
 
@@ -717,6 +818,20 @@ export class ServiceProviderService {
             where: { id: jobId },
             data: { status: 'COMPLETED', end_time: now },
         });
+
+        // Also update parent booking status so customer can see it as Completed
+        if (job.booking_id) {
+            await this.prisma.booking.update({
+                where: { id: job.booking_id },
+                data: { 
+                    status: 'COMPLETED',
+                    jobEndedAt: now
+                }
+            });
+
+            // Notify Customer
+            await this.notifyCustomer(job.booking_id, 'Job Completed', 'Your service provider has marked the job as completed.', 'COMPLETED', { type: 'JOB_ENDED' });
+        }
 
         // Duration-based earnings: base ₹350 + ₹50 per extra hour
         const durationMs = now.getTime() - (job.start_time?.getTime() ?? now.getTime());
@@ -754,16 +869,26 @@ export class ServiceProviderService {
 
         if (!booking) throw new NotFoundException('Job not found');
 
-        // Note: For real time use, we would dispatch a WS event here to notify customer
-        console.log(`[ServiceProvider API] Provider ${id} shared ETA of ${etaMinutes} mins for job ${jobId}`);
+        // Notify Customer via Push
+        if (booking.booking_id) {
+            await this.notifyCustomer(booking.booking_id, 'Provider on the way!', `Your provider will arrive in approximately ${etaMinutes} minutes.`, 'ETA_SHARED');
+        }
 
         return { success: true, message: 'ETA shared with customer', etaMinutes };
     }
 
     async updateLocation(id: string, dto: LocationUpdateDto) {
+        const providerId = await this.resolveProviderId(id);
+        if (!providerId) {
+            console.warn(`[ServiceProviderService][updateLocation] Could not resolve provider for ${id}`);
+            return { success: false };
+        }
+        
+        console.log(`[ServiceProviderService] Updating location for provider ${providerId}: lat=${dto.latitude}, lng=${dto.longitude}`);
+
         // 1. Update live location in Availability for immediate radius matching
         const availability = await this.prisma.availability.findFirst({
-            where: { provider_id: id }
+            where: { provider_id: providerId }
         });
 
         if (availability) {
@@ -939,5 +1064,338 @@ export class ServiceProviderService {
         if (!record) throw new NotFoundException('Address not found');
         await this.prisma.providerAddress.delete({ where: { id: addressId } });
         return { message: 'Address deleted' };
+    }
+
+    // ==================== CLOCK-IN & CLOCK-OUT (FR-PAY-003) ====================
+
+    private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+        const R = 6371; // Earth radius in km
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = 
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c; // Distance in km
+    }
+
+    async clockIn(id: string, dto: { shift_assignment_id: string; latitude: number; longitude: number; device_id: string }) {
+        const providerId = await this.resolveProviderId(id);
+        if (!providerId) throw new NotFoundException('Provider not found');
+
+        // 1. Validate: GPS coordinates are valid
+        if (dto.latitude < -90 || dto.latitude > 90 || dto.longitude < -180 || dto.longitude > 180) {
+            throw new BadRequestException('Invalid GPS coordinates.');
+        }
+
+        // 2. Validate: Shift assignment exists and belongs to provider
+        const assignment = await this.prisma.provider_Shift_Assignments.findUnique({
+            where: { id: dto.shift_assignment_id }
+        });
+        if (!assignment) throw new NotFoundException('Shift assignment not found');
+        if (assignment.provider_id !== providerId) {
+            throw new BadRequestException('This shift assignment belongs to another provider.');
+        }
+        if (assignment.Status === 'CANCELLED') {
+            throw new BadRequestException('Cannot clock in to a cancelled shift.');
+        }
+
+        // 3. Validate: Precondition (Assigned shift exists for today)
+        const todayStr = new Date().toISOString().split('T')[0];
+        const assignmentStr = new Date(assignment.assignment_date).toISOString().split('T')[0];
+        if (todayStr !== assignmentStr) {
+            throw new BadRequestException('You can only clock in to shifts assigned for today.');
+        }
+
+        // 4. Validate: Check if already clocked in today for this shift type
+        const existingAttendance = await this.prisma.provider_Attendance.findFirst({
+            where: {
+                provider_id: providerId,
+                shift_type_id: assignment.shift_type_id,
+                Status: 'CLOCKED_IN',
+            }
+        });
+        if (existingAttendance) {
+            throw new BadRequestException('You are already clocked in for this shift.');
+        }
+
+        // 5. GPS Geofence validation against registered home or work zone address
+        const addresses = await this.prisma.providerAddress.findMany({
+            where: { provider_id: providerId }
+        });
+
+        // Let's compute distance if they have a registered address
+        let locationRemarks = 'No registered address for distance validation';
+        if (addresses.length > 0) {
+            const nearest = addresses.map(addr => ({
+                label: addr.label,
+                distance: this.calculateDistance(dto.latitude, dto.longitude, addr.latitude, addr.longitude)
+            })).sort((a, b) => a.distance - b.distance)[0];
+
+            locationRemarks = `Nearest registered location: ${nearest.label} (Distance: ${nearest.distance.toFixed(2)} km)`;
+        }
+
+        // 6. Save Attendance record
+        const attendance = await this.prisma.provider_Attendance.create({
+            data: {
+                provider_id: providerId,
+                shift_type_id: assignment.shift_type_id,
+                attendance_date: new Date(),
+                in_time: new Date(),
+                Status: 'CLOCKED_IN',
+            }
+        });
+
+        // 7. Postconditions & Audit Logging
+        try {
+            await this.prisma.auditLog.create({
+                data: {
+                    admin_id: 'system-clock-in',
+                    action: `PROVIDER_CLOCK_IN_${providerId}`,
+                    details: `Clocked in for shift assignment ${dto.shift_assignment_id} using device ${dto.device_id}. GPS: (${dto.latitude}, ${dto.longitude}). ${locationRemarks}.`,
+                }
+            });
+        } catch (e) {
+            console.error('[ServiceProviderService] Clock-in audit log failed: ', e);
+        }
+
+        // 8. Notify: Update shift assignment status to APPROVED or CLOCKED_IN if pending
+        if (assignment.Status === 'PENDING') {
+            await this.prisma.provider_Shift_Assignments.update({
+                where: { id: assignment.id },
+                data: { Status: 'ACTIVE' }
+            });
+        }
+
+        return {
+            message: 'Clock-in successful',
+            attendanceId: attendance.id,
+            inTime: attendance.in_time,
+            status: attendance.Status,
+            locationValidation: locationRemarks
+        };
+    }
+
+    async clockOut(id: string, attendanceId: string, dto?: { timestamp?: string }) {
+        const providerId = await this.resolveProviderId(id);
+        if (!providerId) throw new NotFoundException('Provider not found');
+
+        // 1. Fetch active clock-in record
+        const attendance = await this.prisma.provider_Attendance.findUnique({
+            where: { id: attendanceId }
+        });
+        if (!attendance) throw new NotFoundException('Attendance record not found.');
+        if (attendance.provider_id !== providerId) {
+            throw new BadRequestException('This attendance record belongs to another provider.');
+        }
+        if (attendance.Status === 'CLOCKED_OUT') {
+            throw new BadRequestException('You are already clocked out for this attendance record.');
+        }
+
+        // 2. Process: Calculate hours worked
+        const inTime = new Date(attendance.in_time);
+        const outTime = dto?.timestamp ? new Date(dto.timestamp) : new Date();
+        
+        // Ensure outTime is after inTime
+        if (outTime.getTime() < inTime.getTime()) {
+            throw new BadRequestException('Clock-out timestamp cannot be before clock-in time.');
+        }
+
+        const diffMs = outTime.getTime() - inTime.getTime();
+        const diffHours = Math.max(1, Math.round(diffMs / (1000 * 60 * 60))); // Default to at least 1 hour
+
+        // Fetch shift type to automatically classify attendance (FR-PAY-005)
+        const shiftType = await this.prisma.provider_Shift_Type.findUnique({
+            where: { id: attendance.shift_type_id }
+        });
+        const targetDuration = shiftType?.Duration_hours ?? 8;
+
+        let classification = 'PRESENT';
+        if (diffHours < (targetDuration * 0.5)) {
+            classification = 'ABSENT';
+        } else if (diffHours < (targetDuration * 0.9)) {
+            classification = 'HALF_DAY';
+        }
+
+        // 3. Save: Update attendance record with automated classification
+        const updatedAttendance = await this.prisma.provider_Attendance.update({
+            where: { id: attendanceId },
+            data: {
+                out_time: outTime,
+                total_hours: diffHours,
+                Status: classification,
+            }
+        });
+
+        // 4. Postconditions & Audit Logging
+        try {
+            await this.prisma.auditLog.create({
+                data: {
+                    admin_id: 'system-clock-out',
+                    action: `PROVIDER_CLOCK_OUT_${providerId}`,
+                    details: `Clocked out from shift ${attendance.shift_type_id}. Worked ${diffHours}/${targetDuration} hours. Classified as ${classification}.`,
+                }
+            });
+        } catch (e) {
+            console.error('[ServiceProviderService] Clock-out audit log failed: ', e);
+        }
+
+        return {
+            message: 'Clock-out successful and attendance classified',
+            attendanceId: updatedAttendance.id,
+            outTime: updatedAttendance.out_time,
+            totalHours: updatedAttendance.total_hours,
+            status: updatedAttendance.Status
+        };
+    }
+
+    // ==================== EARNINGS DASHBOARD (FR-PAY-010) ====================
+
+    async getEarningsDashboard(providerId: string) {
+        // 1. Validate: Confirm provider exists
+        const provider = await this.prisma.serviceProvider.findUnique({
+            where: { id: providerId },
+        });
+        if (!provider) throw new NotFoundException('Service provider not found');
+
+        // 2. Process: Fetch wallet balance
+        const wallet = await this.prisma.spWallet.findFirst({
+            where: { provider_id: providerId }
+        });
+        const currentBalance = wallet ? Number(wallet.balance) : 0;
+
+        // 3. Process: Fetch salary ledger entries (last 30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        const ledgerEntries = await this.prisma.provider_Salary_Ledger.findMany({
+            where: {
+                provider_id: providerId,
+                Shift_Date: { gte: thirtyDaysAgo }
+            },
+            orderBy: { Shift_Date: 'desc' }
+        });
+
+        // 4. Process: Aggregate salary totals
+        const earningsSummary = ledgerEntries.reduce(
+            (acc, entry) => {
+                acc.totalBaseSalary += Number(entry.Base_Salary);
+                acc.totalOvertimePay += Number(entry.Overtime_pay);
+                acc.totalBonuses += Number(entry.Bonus_Amount);
+                acc.totalPenalties += Number(entry.Penalty_Amount);
+                acc.totalEarnings += Number(entry.Total_pay);
+                return acc;
+            },
+            { totalBaseSalary: 0, totalOvertimePay: 0, totalBonuses: 0, totalPenalties: 0, totalEarnings: 0 }
+        );
+
+        // 5. Process: Fetch attendance summary (last 30 days)
+        const attendanceRecords = await this.prisma.provider_Attendance.findMany({
+            where: {
+                provider_id: providerId,
+                attendance_date: { gte: thirtyDaysAgo }
+            },
+            orderBy: { attendance_date: 'desc' }
+        });
+
+        const attendanceSummary = attendanceRecords.reduce(
+            (acc, record) => {
+                acc.totalShifts++;
+                acc.totalHoursWorked += record.total_hours;
+                if (record.Status === 'PRESENT') acc.presentDays++;
+                else if (record.Status === 'HALF_DAY') acc.halfDays++;
+                else if (record.Status === 'ABSENT') acc.absentDays++;
+                else if (record.Status === 'LATE') acc.lateDays++;
+                return acc;
+            },
+            { totalShifts: 0, totalHoursWorked: 0, presentDays: 0, halfDays: 0, absentDays: 0, lateDays: 0 }
+        );
+
+        // 6. Process: Fetch payroll settlement history (all time)
+        const settlementHistory = await this.prisma.provider_payroll_settlement.findMany({
+            where: { provider_id: providerId },
+            orderBy: { Payout_Cycle: 'desc' },
+            take: 12 // Last 12 settlement cycles
+        });
+
+        // 7. Process: Fetch recent payouts from wallet
+        let recentPayouts: any[] = [];
+        if (wallet) {
+            recentPayouts = await this.prisma.payout.findMany({
+                where: { spwallet_id: wallet.id },
+                orderBy: { createdAt: 'desc' },
+                take: 10
+            });
+        }
+
+        // 8. Process: Fetch performance metrics
+        const performanceMetrics = await this.prisma.performancemetric.findMany({
+            where: { provider_id: providerId }
+        });
+
+        // 9. Postconditions: Audit Log
+        try {
+            await this.prisma.auditLog.create({
+                data: {
+                    admin_id: 'provider-self-view',
+                    action: `EARNINGS_DASHBOARD_VIEWED_${providerId}`,
+                    details: `Provider ${provider.name} viewed earnings dashboard.`,
+                }
+            });
+        } catch (e) {
+            console.error('[ServiceProviderService] Earnings dashboard audit log failed: ', e);
+        }
+
+        // 10. Output: Return consolidated dashboard
+        return {
+            provider: {
+                id: provider.id,
+                name: provider.name,
+
+                phone: provider.phoneNumber,
+            },
+            wallet: {
+                currentBalance,
+                walletId: wallet?.id ?? null,
+            },
+            earningsSummary: {
+                ...earningsSummary,
+                netEarnings: earningsSummary.totalEarnings,
+                period: 'Last 30 days',
+            },
+            attendanceSummary: {
+                ...attendanceSummary,
+                period: 'Last 30 days',
+            },
+            dailyLedger: ledgerEntries.map(e => ({
+                date: e.Shift_Date,
+                baseSalary: Number(e.Base_Salary),
+                overtimePay: Number(e.Overtime_pay),
+                bonus: Number(e.Bonus_Amount),
+                penalty: Number(e.Penalty_Amount),
+                totalPay: Number(e.Total_pay),
+            })),
+            settlementHistory: settlementHistory.map(s => ({
+                id: s.id,
+                payoutCycle: s.Payout_Cycle,
+                payoutDate: s.payout_date,
+                totalBonus: Number(s.total_bonus),
+                totalPenalty: Number(s.total_penalty),
+                totalDeduction: Number(s.total_deduction),
+                totalPayment: Number(s.total_payment),
+                status: s.status,
+            })),
+            recentPayouts: recentPayouts.map(p => ({
+                id: p.id,
+                amount: Number(p.amount),
+                status: p.status,
+                date: p.createdAt,
+            })),
+            performanceMetrics: performanceMetrics.map(m => ({
+                metric: m.metric,
+                value: m.value,
+            })),
+        };
     }
 }

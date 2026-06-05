@@ -27,6 +27,12 @@ export class CustomerController {
         return this.customerService.verifyOtp(body.phoneNumber, body.otp);
     }
 
+    @Post('auth/fcm-token')
+    @ApiOperation({ summary: 'Update FCM token for customer' })
+    async updateFcmToken(@Body() body: { phoneNumber: string; fcmToken: string }) {
+        return this.customerService.updateFcmToken(body.phoneNumber, body.fcmToken);
+    }
+
     // ==================== PROFILE ====================
 
     @Get(':id/profile')
@@ -137,6 +143,26 @@ export class CustomerController {
     @ApiOperation({ summary: 'Get payment history' })
     async getPaymentHistory(@Param('id') id: string) {
         return this.customerService.getPaymentHistory(id);
+    }
+
+    // ==================== COUPONS & PACKAGES ====================
+
+    @Get(':id/available-coupons')
+    @ApiOperation({ summary: 'Get available coupons for home screen' })
+    async getAvailableCoupons(@Param('id') id: string) {
+        return this.customerService.getAvailableCoupons(id);
+    }
+
+    @Post(':id/purchase-coupon/:couponId')
+    @ApiOperation({ summary: 'Purchase/Redeem a coupon package' })
+    async purchaseCoupon(@Param('id') id: string, @Param('couponId') couponId: string) {
+        return this.customerService.purchaseCoupon(id, couponId);
+    }
+
+    @Get(':id/purchased-coupons')
+    @ApiOperation({ summary: 'List coupons already purchased by customer' })
+    async getPurchasedCoupons(@Param('id') id: string) {
+        return this.customerService.getPurchasedCoupons(id);
     }
 
     // ==================== RATINGS & SUPPORT ====================

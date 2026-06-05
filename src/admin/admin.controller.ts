@@ -12,7 +12,16 @@ import { BookingStatus } from '@prisma/client';
 import { CreateServiceProviderDto } from './dto/create-service-provider.dto';
 import { CreateServiceCategoryDto } from './dto/create-service-category.dto';
 import { CreateServiceItemDto } from './dto/create-service-item.dto';
+import { UpdateServiceItemDto } from './dto/update-service-item.dto';
 import { CreateCouponDto } from './dto/create-coupon.dto';
+import { CreateShiftTypeDto } from './dto/create-shift-type.dto';
+import { UpdateShiftTypeDto } from './dto/update-shift-type.dto';
+import { AssignShiftDto } from './dto/assign-shift.dto';
+import { UpdateAssignmentStatusDto } from './dto/update-assignment-status.dto';
+import { GeneratePayrollSettlementDto } from './dto/generate-payroll-settlement.dto';
+import { ExportPayrollReportDto } from './dto/export-payroll-report.dto';
+import { DetectFraudDto } from './dto/detect-fraud.dto';
+
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -590,6 +599,19 @@ export class AdminController {
         return this.adminService.createServiceItem(body);
     }
 
+    @Patch('service-items/:id')
+    @ApiOperation({
+        summary: 'Update service item',
+        description: 'Update an existing service item details and optional photo',
+        tags: ['Service Catalog'],
+    })
+    @ApiParam({ name: 'id', description: 'ID of the service item to update' })
+    @ApiBody({ type: UpdateServiceItemDto })
+    @ApiResponse({ status: 200, description: 'Service item updated successfully' })
+    async updateServiceItem(@Param('id') id: string, @Body() body: UpdateServiceItemDto) {
+        return this.adminService.updateServiceItem(id, body);
+    }
+
     // ==================== COUPON MANAGEMENT ====================
 
     @Post('coupons')
@@ -626,5 +648,389 @@ export class AdminController {
     async deleteCoupon(@Param('id') id: string) {
         return this.adminService.deleteCoupon(id);
     }
+
+    // ==================== SHIFT CONFIGURATION (FR-PAY-001) ====================
+
+    @Post('shifts')
+    @ApiOperation({
+        summary: 'Create shift type configuration',
+        description: 'Configure shift types (8h/10h/12h) with salary and overtime settings',
+        tags: ['Shift Configuration'],
+    })
+    @ApiBody({ type: CreateShiftTypeDto })
+    @ApiResponse({ status: 201, description: 'Shift type created successfully' })
+    @ApiResponse({ status: 400, description: 'Invalid shift details or duration hours' })
+    async createShiftType(@Body() body: CreateShiftTypeDto) {
+        // Authenticated admin ID mocked
+        const adminId = 'mock-admin-id';
+        return this.adminService.createShiftType(body, adminId);
+    }
+
+    @Get('shifts')
+    @ApiOperation({
+        summary: 'Get all configured shift types',
+        description: 'Retrieve a list of all configured shift types',
+        tags: ['Shift Configuration'],
+    })
+    @ApiResponse({ status: 200, description: 'Configured shift types retrieved successfully' })
+    async getShiftTypes() {
+        return this.adminService.findAllShiftTypes();
+    }
+
+    @Get('shifts/:id')
+    @ApiOperation({
+        summary: 'Get shift type details',
+        description: 'Retrieve details for a specific configured shift type by ID',
+        tags: ['Shift Configuration'],
+    })
+    @ApiParam({ name: 'id', description: 'Shift Type ID' })
+    @ApiResponse({ status: 200, description: 'Shift type details retrieved successfully' })
+    @ApiResponse({ status: 404, description: 'Shift type not found' })
+    async getShiftType(@Param('id') id: string) {
+        return this.adminService.findOneShiftType(id);
+    }
+
+    @Patch('shifts/:id')
+    @ApiOperation({
+        summary: 'Update shift type configuration',
+        description: 'Update salary, overtime rate or details of a shift type',
+        tags: ['Shift Configuration'],
+    })
+    @ApiParam({ name: 'id', description: 'Shift Type ID' })
+    @ApiBody({ type: UpdateShiftTypeDto })
+    @ApiResponse({ status: 200, description: 'Shift type updated successfully' })
+    @ApiResponse({ status: 404, description: 'Shift type not found' })
+    async updateShiftType(@Param('id') id: string, @Body() body: UpdateShiftTypeDto) {
+        // Authenticated admin ID mocked
+        const adminId = 'mock-admin-id';
+        return this.adminService.updateShiftType(id, body, adminId);
+    }
+
+    @Delete('shifts/:id')
+    @ApiOperation({
+        summary: 'Delete shift type configuration',
+        description: 'Delete a configured shift type by ID',
+        tags: ['Shift Configuration'],
+    })
+    @ApiParam({ name: 'id', description: 'Shift Type ID' })
+    @ApiResponse({ status: 200, description: 'Shift type deleted successfully' })
+    @ApiResponse({ status: 404, description: 'Shift type not found' })
+    async deleteShiftType(@Param('id') id: string) {
+        // Authenticated admin ID mocked
+        const adminId = 'mock-admin-id';
+        return this.adminService.deleteShiftType(id, adminId);
+    }
+
+    // ==================== SHIFT ASSIGNMENT (FR-PAY-002) ====================
+
+    @Post('shifts/assign')
+    @ApiOperation({
+        summary: 'Assign provider to shift',
+        description: 'Admin shall assign active/verified providers to shift types on specific dates',
+        tags: ['Shift Assignment'],
+    })
+    @ApiBody({ type: AssignShiftDto })
+    @ApiResponse({ status: 201, description: 'Shift assignment created successfully' })
+    @ApiResponse({ status: 400, description: 'Provider not verified, invalid shift type, or double booking' })
+    async assignShift(@Body() body: AssignShiftDto) {
+        // Authenticated admin ID mocked
+        const adminId = 'mock-admin-id';
+        return this.adminService.assignShift(body, adminId);
+    }
+
+    @Get('shifts/assignments/all')
+    @ApiOperation({
+        summary: 'Get all shift assignments',
+        description: 'Retrieve a list of all shift assignments with optional filters',
+        tags: ['Shift Assignment'],
+    })
+    @ApiQuery({ name: 'provider_id', required: false, description: 'Filter by provider ID' })
+    @ApiQuery({ name: 'shift_type_id', required: false, description: 'Filter by shift type ID' })
+    @ApiQuery({ name: 'date', required: false, description: 'Filter by shift date (YYYY-MM-DD)' })
+    @ApiResponse({ status: 200, description: 'Shift assignments retrieved successfully' })
+    async getShiftAssignments(
+        @Query('provider_id') providerId?: string,
+        @Query('shift_type_id') shiftTypeId?: string,
+        @Query('date') date?: string,
+    ) {
+        return this.adminService.findAllShiftAssignments({
+            provider_id: providerId,
+            shift_type_id: shiftTypeId,
+            date
+        });
+    }
+
+    @Get('shifts/assignments/:id')
+    @ApiOperation({
+        summary: 'Get shift assignment details',
+        description: 'Retrieve details for a specific shift assignment by ID',
+        tags: ['Shift Assignment'],
+    })
+    @ApiParam({ name: 'id', description: 'Shift Assignment ID' })
+    @ApiResponse({ status: 200, description: 'Shift assignment details retrieved successfully' })
+    @ApiResponse({ status: 404, description: 'Shift assignment not found' })
+    async getShiftAssignment(@Param('id') id: string) {
+        return this.adminService.findOneShiftAssignment(id);
+    }
+
+    @Patch('shifts/assignments/:id/status')
+    @ApiOperation({
+        summary: 'Update shift assignment status',
+        description: 'Update the status of a shift assignment (e.g. APPROVED, COMPLETED, CANCELLED)',
+        tags: ['Shift Assignment'],
+    })
+    @ApiParam({ name: 'id', description: 'Shift Assignment ID' })
+    @ApiBody({ type: UpdateAssignmentStatusDto })
+    @ApiResponse({ status: 200, description: 'Shift assignment status updated successfully' })
+    @ApiResponse({ status: 404, description: 'Shift assignment not found' })
+    async updateShiftAssignmentStatus(@Param('id') id: string, @Body() body: UpdateAssignmentStatusDto) {
+        // Authenticated admin ID mocked
+        const adminId = 'mock-admin-id';
+        return this.adminService.updateShiftAssignmentStatus(id, body.status, adminId);
+    }
+
+    @Delete('shifts/assignments/:id')
+    @ApiOperation({
+        summary: 'Delete/Cancel shift assignment',
+        description: 'Cancel or permanently delete a shift assignment by ID',
+        tags: ['Shift Assignment'],
+    })
+    @ApiParam({ name: 'id', description: 'Shift Assignment ID' })
+    @ApiResponse({ status: 200, description: 'Shift assignment deleted successfully' })
+    @ApiResponse({ status: 404, description: 'Shift assignment not found' })
+    async deleteShiftAssignment(@Param('id') id: string) {
+        // Authenticated admin ID mocked
+        const adminId = 'mock-admin-id';
+        return this.adminService.deleteShiftAssignment(id, adminId);
+    }
+
+    // ==================== ATTENDANCE CLASSIFICATION (FR-PAY-005) ====================
+
+    @Post('attendance/:id/classify')
+    @ApiOperation({
+        summary: 'Manually classify attendance record',
+        description: 'Classifies worked hours into PRESENT, HALF_DAY, or ABSENT status',
+        tags: ['Attendance Classification'],
+    })
+    @ApiParam({ name: 'id', description: 'Attendance ID' })
+    @ApiResponse({ status: 200, description: 'Attendance classified successfully' })
+    @ApiResponse({ status: 404, description: 'Attendance record not found' })
+    async classifyAttendanceRecord(@Param('id') id: string) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.classifyAttendanceRecord(id, adminId);
+    }
+
+    @Post('attendance/classify-routine')
+    @ApiOperation({
+        summary: 'Run automated daily attendance classification routine',
+        description: 'System routine to scan and classify all provider attendance status for a specific date',
+        tags: ['Attendance Classification'],
+    })
+    @ApiResponse({ status: 200, description: 'Automated routine completed successfully' })
+    async runClassifyRoutine(@Body('date') date: string) {
+        const adminId = 'system-cron';
+        // Validate date format, default to today if not provided
+        const targetDate = date || new Date().toISOString().split('T')[0];
+        return this.adminService.runClassifyRoutine(targetDate, adminId);
+    }
+
+    // ==================== SALARY CALCULATION (FR-PAY-006) ====================
+
+    @Post('salary/calculate/:attendanceId')
+    @ApiOperation({
+        summary: 'Calculate salary for completed attendance',
+        description: 'Applies dynamic bonus/penalty rules and overtime calculation for a completed attendance record',
+        tags: ['Salary Calculation'],
+    })
+    @ApiParam({ name: 'attendanceId', description: 'Attendance ID' })
+    @ApiResponse({ status: 200, description: 'Salary calculated and ledger updated successfully' })
+    @ApiResponse({ status: 400, description: 'Shift not completed yet' })
+    @ApiResponse({ status: 404, description: 'Attendance or Shift Type not found' })
+    async calculateSalaryForAttendance(@Param('attendanceId') attendanceId: string) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.calculateSalaryForAttendance(attendanceId, adminId);
+    }
+
+    @Post('salary/calculate-routine')
+    @ApiOperation({
+        summary: 'Run automated daily salary calculation routine',
+        description: 'System routine to calculate and generate salary ledger records for all completed attendance on a specific date',
+        tags: ['Salary Calculation'],
+    })
+    @ApiResponse({ status: 200, description: 'Automated daily salary routine completed successfully' })
+    async runSalaryCalculationRoutine(@Body('date') date: string) {
+        const adminId = 'system-cron';
+        const targetDate = date || new Date().toISOString().split('T')[0];
+        return this.adminService.runSalaryCalculationRoutine(targetDate, adminId);
+    }
+
+    // ==================== BONUS MANAGEMENT (FR-PAY-007) ====================
+
+    @Post('bonus/apply/:providerId')
+    @ApiOperation({
+        summary: 'Apply performance bonus to provider wallet',
+        description: 'Validates performance metric thresholds and credits provider wallet and daily salary ledger with bonuses',
+        tags: ['Bonus Management'],
+    })
+    @ApiParam({ name: 'providerId', description: 'Service Provider ID' })
+    @ApiResponse({ status: 200, description: 'Performance bonus successfully calculated and applied' })
+    @ApiResponse({ status: 400, description: 'Provider does not qualify for bonus' })
+    @ApiResponse({ status: 404, description: 'Provider or performance rules not found' })
+    async applyPerformanceBonus(
+        @Param('providerId') providerId: string,
+        @Body('metricName') metricName: string
+    ) {
+        const adminId = 'mock-admin-id';
+        const metric = metricName || 'COMPLETED_JOBS';
+        return this.adminService.applyPerformanceBonus(providerId, metric, adminId);
+    }
+
+    // ==================== PENALTY MANAGEMENT (FR-PAY-008) ====================
+
+    @Post('penalty/deduct/:providerId')
+    @ApiOperation({
+        summary: 'Apply penalty deduction to provider wallet for violations',
+        description: 'Validates violation status and deducts penalty from provider wallet and daily salary ledger',
+        tags: ['Penalty Management'],
+    })
+    @ApiParam({ name: 'providerId', description: 'Service Provider ID' })
+    @ApiResponse({ status: 200, description: 'Penalty successfully calculated and deducted' })
+    @ApiResponse({ status: 404, description: 'Provider or violation not found' })
+    async applyPenaltyDeduction(
+        @Param('providerId') providerId: string,
+        @Body('violationRule') violationRule: string
+    ) {
+        const adminId = 'mock-admin-id';
+        const violation = violationRule || 'LATE_ARRIVAL';
+        return this.adminService.applyPenaltyDeduction(providerId, violation, adminId);
+    }
+
+    // ==================== PAYROLL SETTLEMENT (FR-PAY-009) ====================
+
+    @Get('payroll/settlements')
+    @ApiOperation({
+        summary: 'Get all generated payroll settlements',
+        description: 'Retrieve all payroll settlements with optional date and status filters',
+        tags: ['Payroll Settlement'],
+    })
+    @ApiQuery({ name: 'startDate', required: false, description: 'Filter by cycle start date' })
+    @ApiQuery({ name: 'endDate', required: false, description: 'Filter by cycle end date' })
+    @ApiQuery({ name: 'status', required: false, description: 'Filter by status (PENDING, APPROVED, DISBURSED)' })
+    @ApiResponse({ status: 200, description: 'Payroll settlements retrieved successfully' })
+    async getPayrollSettlements(
+        @Query('startDate') startDate?: string,
+        @Query('endDate') endDate?: string,
+        @Query('status') status?: string,
+    ) {
+        return this.adminService.findAllPayrollSettlements({ startDate, endDate, status });
+    }
+
+    @Post('payroll/settlements')
+    @ApiOperation({
+        summary: 'Generate payroll settlements',
+        description: 'Scans salary ledger entries in the range and creates PENDING payroll settlements for each provider',
+        tags: ['Payroll Settlement'],
+    })
+    @ApiResponse({ status: 201, description: 'Payroll settlements successfully generated' })
+    @ApiResponse({ status: 400, description: 'Invalid dates or empty ledger range' })
+    async generatePayrollSettlements(@Body() dto: GeneratePayrollSettlementDto) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.generatePayrollSettlements(dto, adminId);
+    }
+
+    @Patch('payroll/settlement/:id/approve')
+    @ApiOperation({
+        summary: 'Approve payroll settlement',
+        description: 'Approves the PENDING payroll settlement, preparing it for disbursement',
+        tags: ['Payroll Settlement'],
+    })
+    @ApiParam({ name: 'id', description: 'Settlement ID' })
+    @ApiResponse({ status: 200, description: 'Payroll settlement approved successfully' })
+    @ApiResponse({ status: 400, description: 'Settlement must be in PENDING status' })
+    @ApiResponse({ status: 404, description: 'Payroll settlement not found' })
+    async approvePayrollSettlement(@Param('id') id: string) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.approvePayrollSettlement(id, adminId);
+    }
+
+    @Post('payroll/settlement/:id/disburse')
+    @ApiOperation({
+        summary: 'Disburse payroll settlement',
+        description: 'Disburses payout amount to the provider, crediting their wallet and creating a disbursed payout record',
+        tags: ['Payroll Settlement'],
+    })
+    @ApiParam({ name: 'id', description: 'Settlement ID' })
+    @ApiResponse({ status: 200, description: 'Payroll settlement disbursed successfully' })
+    @ApiResponse({ status: 400, description: 'Settlement must be in APPROVED status' })
+    @ApiResponse({ status: 404, description: 'Payroll settlement not found' })
+    async disbursePayrollSettlement(@Param('id') id: string) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.disbursePayrollSettlement(id, adminId);
+    }
+
+    // ==================== PAYROLL REPORTS (FR-PAY-011) ====================
+
+    @Get('payroll/report')
+    @ApiOperation({
+        summary: 'Export payroll reports',
+        description: 'Export structured payroll reports with total payout, base salary, overtime, bonuses, deductions, and provider ledger items within a date range',
+        tags: ['Payroll Reports'],
+    })
+    @ApiResponse({ status: 200, description: 'Payroll reports exported successfully' })
+    @ApiResponse({ status: 400, description: 'Invalid date range or parameters' })
+    async exportPayrollReport(@Query() dto: ExportPayrollReportDto) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.exportPayrollReport(dto, adminId);
+    }
+
+    // ==================== FRAUD PREVENTION (FR-PAY-012) ====================
+
+    @Post('fraud/detect')
+    @ApiOperation({
+        summary: 'Detect GPS spoofing and suspicious attendance',
+        description: 'Validates GPS data, checks mock location flags, analyzes velocity anomalies, and checks device sharing across service providers.',
+        tags: ['Fraud Prevention'],
+    })
+    @ApiBody({ type: DetectFraudDto })
+    @ApiResponse({ status: 200, description: 'Fraud detection successfully evaluated' })
+    @ApiResponse({ status: 400, description: 'Invalid coordinates or input payload' })
+    @ApiResponse({ status: 404, description: 'Service provider not found' })
+    async detectFraud(@Body() dto: DetectFraudDto) {
+        const adminId = 'system';
+        return this.adminService.detectFraud(dto, adminId);
+    }
+
+    // ==================== SALARY LEDGER (FR-PAY-010) ====================
+
+    @Get('salary-ledger')
+    @ApiOperation({
+        summary: 'Get all daily salary ledger records',
+        description: 'Retrieves all daily salary ledger entries with filters for dates',
+        tags: ['Salary Ledger'],
+    })
+    @ApiQuery({ name: 'dateFrom', required: false, description: 'Filter by start date' })
+    @ApiQuery({ name: 'dateTo', required: false, description: 'Filter by end date' })
+    async getSalaryLedger(
+        @Query('dateFrom') dateFrom?: string,
+        @Query('dateTo') dateTo?: string,
+    ) {
+        return this.adminService.findSalaryLedger({ dateFrom, dateTo });
+    }
+
+    @Patch('salary-ledger/:id')
+    @ApiOperation({
+        summary: 'Adjust salary ledger entry',
+        description: 'Updates a daily salary ledger record with manual base, bonus, penalty, or overtime adjustments',
+        tags: ['Salary Ledger'],
+    })
+    @ApiParam({ name: 'id', description: 'Ledger record ID' })
+    async updateSalaryLedger(
+        @Param('id') id: string,
+        @Body() body: any
+    ) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.updateSalaryLedger(id, body, adminId);
+    }
 }
+
 

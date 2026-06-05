@@ -29,6 +29,7 @@ model User {
   serviceProviders ServiceProvider[]
   wallets          Wallet[]
   customers        Customer[]
+  fcmToken         String?
 }
 
 model ServiceCategory {
@@ -45,6 +46,7 @@ model ServiceItem {
   name        String
   description String
   price       Decimal
+  imageUrl    String?
 
   categoryId String
   category   ServiceCategory @relation(fields: [categoryId], references: [id])
@@ -100,6 +102,9 @@ model Booking {
   couponId       String?
   coupon         Coupon?  @relation(fields: [couponId], references: [id])
   discountAmount Decimal? @default(0)
+
+  purchasedCouponId String?
+  purchasedCoupon   PurchasedCoupon? @relation(fields: [purchasedCouponId], references: [id])
 }
 
 model Coupon {
@@ -111,6 +116,32 @@ model Coupon {
   isActive        Boolean  @default(true)
   usageLimit      Int      @default(0) // 0 means unlimited
   usedCount       Int      @default(0)
+  
+  // New fields for Job Packages
+  isVisibleOnHome    Boolean @default(false)
+  price              Decimal @default(0)
+  allowedJobsCount   Int     @default(0) // e.g. 3 jobs
+  jobDurationMinutes Int     @default(60) // e.g. 60 mins per job
+  description        String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  bookings        Booking[]
+  purchasedCoupons PurchasedCoupon[]
+}
+
+model PurchasedCoupon {
+  id              String   @id @default(uuid())
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id])
+  couponId        String
+  coupon          Coupon   @relation(fields: [couponId], references: [id])
+  
+  remainingJobs   Int
+  totalJobs       Int
+  jobDuration     Int      // minutes per job
+  isPaid          Boolean  @default(false)
+  
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   bookings        Booking[]
@@ -383,6 +414,7 @@ model Customer {
   customerWallets    CustomerWallet[]
   customerBookings   CustomerBooking[]
   supportTickets     SupportTicket[]
+  purchasedCoupons   PurchasedCoupon[]
 }
 
 model CustomerViolation {
@@ -534,8 +566,81 @@ model ProviderAddress {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 }
+model provider_Bonus_Rules{
+  id  String  @id @default(uuid())
+  Rule_Name String @unique
+  Amount Decimal @default(0)  
+  Condition_Type String
+}
+model provider_Penalty_Rules{
+  id String @id @default(uuid())
+  Rule_Name String @unique
+  Amount Decimal @default(0)  
+  Violation_Type String
+}
 
-model AdminNotification {
+model provider_Shift_Type{
+  id String @id @default(uuid())
+  Shift_Name String 
+  Duration_hours Int @default(0)
+  Daily_Salary Decimal @default(0)
+  Overtime_Rate Int @default(0)
+  attendancePercent Int @default(90)
+  targetJobs Int @default(5)
+  status String @default("ACTIVE")
+}
+
+model provider_Shift_Assignments{
+  id String @id @default(uuid())
+  provider_id String
+  shift_type_id String
+  assignment_date DateTime @default(now())
+  Status String @default("PENDING")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+model provider_Attendance{
+  id String @id @default(uuid())
+  provider_id String 
+  shift_type_id String
+  attendance_date DateTime @default(now())
+  in_time DateTime 
+  out_time DateTime?
+  total_hours Int @default(0)    
+  Status String @default("PENDING")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+model provider_Salary_Ledger{
+  id String @id @default(uuid())
+  provider_id String 
+  Shift_Date DateTime @default(now()) 
+  Base_Salary Decimal @default(0) 
+  Overtime_pay Decimal @default(0)
+  Bonus_Amount Decimal @default(0)
+  Penalty_Amount Decimal @default(0)
+  Total_pay Decimal @default(0)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt  
+} 
+
+model provider_payroll_settlement{
+  id String @id @default(uuid())
+  provider_id String 
+  Payout_Cycle DateTime @default(now())
+  total_bonus Decimal @default(0)
+  total_penalty Decimal @default(0)
+  total_deduction Decimal @default(0)
+  total_payment Decimal @default(0)
+  status String @default("PENDING") 
+  payout_date DateTime @default(now())  
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt    
+}
+
+model adminNotification {
   id        String   @id @default(uuid())
   type      String   // e.g. "KYC_SUBMITTED"
   title     String

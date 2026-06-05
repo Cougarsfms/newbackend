@@ -26,4 +26,9 @@ export class CreateServiceItemDto {
     @IsNumber()
     @IsOptional()
     durationMinutes?: number;
+
+    @ApiProperty({ example: 'https://images.unsplash.com/...', description: 'URL of the service photo', required: false })
+    @IsString()
+    @IsOptional()
+    imageUrl?: string;
 }

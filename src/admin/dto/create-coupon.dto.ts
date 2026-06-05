@@ -25,4 +25,27 @@ export class CreateCouponDto {
     @IsNumber()
     @Min(0)
     usageLimit?: number;
+
+    @IsOptional()
+    @IsBoolean()
+    isVisibleOnHome?: boolean;
+
+    @IsOptional()
+    @IsNumber()
+    @Min(0)
+    price?: number;
+
+    @IsOptional()
+    @IsNumber()
+    @Min(0)
+    allowedJobsCount?: number;
+
+    @IsOptional()
+    @IsNumber()
+    @Min(0)
+    jobDurationMinutes?: number;
+
+    @IsOptional()
+    @IsString()
+    description?: string;
 }

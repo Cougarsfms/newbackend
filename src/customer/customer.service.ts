@@ -390,4 +390,61 @@ export class CustomerService {
             }
         });
     }
+
+    async updateFcmToken(phoneNumber: string, fcmToken: string) {
+        return this.prisma.user.update({
+            where: { phoneNumber },
+            data: { fcmToken }
+        });
+    }
+
+    // ==================== COUPONS & PACKAGES ====================
+
+    async getAvailableCoupons(customerId: string) {
+        const purchasedCoupons = await this.prisma.purchasedCoupon.findMany({
+            where: { customerId },
+            select: { couponId: true }
+        });
+
+        const purchasedIds = purchasedCoupons.map(pc => pc.couponId);
+
+        return this.prisma.coupon.findMany({
+            where: {
+                isActive: true,
+                isVisibleOnHome: true,
+                id: { notIn: purchasedIds },
+                expiryDate: { gte: new Date() }
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+    }
+
+    async purchaseCoupon(customerId: string, couponId: string) {
+        const coupon = await this.prisma.coupon.findUnique({ where: { id: couponId } });
+        if (!coupon) throw new NotFoundException('Coupon not found');
+
+        const existing = await this.prisma.purchasedCoupon.findFirst({
+            where: { customerId, couponId }
+        });
+        if (existing) throw new BadRequestException('Package already redeemed');
+
+        return this.prisma.purchasedCoupon.create({
+            data: {
+                customerId,
+                couponId,
+                remainingJobs: coupon.allowedJobsCount,
+                totalJobs: coupon.allowedJobsCount,
+                jobDuration: coupon.jobDurationMinutes,
+                isPaid: true, // Auto-pay for now for testing
+            }
+        });
+    }
+
+    async getPurchasedCoupons(customerId: string) {
+        return this.prisma.purchasedCoupon.findMany({
+            where: { customerId },
+            include: { coupon: true },
+            orderBy: { createdAt: 'desc' }
+        });
+    }
 }

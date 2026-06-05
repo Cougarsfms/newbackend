@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Headers, Param, ParseUUIDPipe, Patch } from '@nestjs/common';
+import { Controller, Get, Post, Body, Headers, Param, ParseUUIDPipe, Patch, Query } from '@nestjs/common';
 import { BookingsService } from './bookings.service';
 import { UsersService } from '../users/users.service';
 
@@ -20,6 +20,7 @@ export class BookingsController {
     @Body('endDate') endDate?: string,
     @Body('dates') dates?: string[],
     @Body('couponCode') couponCode?: string,
+    @Body('purchasedCouponId') purchasedCouponId?: string,
   ) {
     // Mock user lookup/create from token logic since we don't have full JWT middleware yet
     const user = await this.usersService.findOrCreate(phoneNumber);
@@ -33,6 +34,7 @@ export class BookingsController {
       endDate: endDate ? new Date(endDate) : undefined,
       dates: dates ? dates.map(d => new Date(d)) : undefined,
       couponCode,
+      purchasedCouponId,
     });
   }
 
@@ -80,5 +82,33 @@ export class BookingsController {
   @Post(':id/end')
   async endJob(@Param('id') id: string) {
     return this.bookingsService.endJob(id);
+  }
+
+  @Post(':id/rate')
+  async submitRating(
+    @Param('id') id: string,
+    @Body('score') score: number,
+    @Body('comment') comment: string
+  ) {
+    return this.bookingsService.submitRating(id, score, comment);
+  }
+
+  @Get('check-availability')
+  async checkAvailability(
+    @Query('serviceId') serviceId: string,
+    @Query('latitude') latitude: string,
+    @Query('longitude') longitude: string,
+    @Query('date') date: string,
+    @Query('durationMinutes') durationMinutes?: string,
+    @Query('timezoneOffset') timezoneOffset?: string,
+  ) {
+    return this.bookingsService.checkAvailability({
+      serviceId,
+      latitude: parseFloat(latitude),
+      longitude: parseFloat(longitude),
+      date: date,
+      durationMinutes: durationMinutes ? parseInt(durationMinutes, 10) : 60,
+      timezoneOffset: timezoneOffset ? parseInt(timezoneOffset, 10) : 0,
+    });
   }
 }

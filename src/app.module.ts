@@ -9,9 +9,20 @@ import { BookingsModule } from './bookings/bookings.module';
 import { AdminModule } from './admin/admin.module';
 import { ServiceProviderModule } from './service-provider/service-provider.module';
 import { CustomerModule } from './customer/customer.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
-  imports: [AuthModule, UsersModule, PrismaModule, ServicesModule, BookingsModule, AdminModule, ServiceProviderModule, CustomerModule],
+  imports: [
+    AuthModule,
+    UsersModule,
+    PrismaModule,
+    ServicesModule,
+    BookingsModule,
+    AdminModule,
+    ServiceProviderModule,
+    CustomerModule,
+    NotificationsModule
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

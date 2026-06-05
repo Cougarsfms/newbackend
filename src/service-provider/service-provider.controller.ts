@@ -8,6 +8,8 @@ import { UploadKycDto } from './dto/upload-kyc.dto';
 import { JobActionDto } from './dto/job-action.dto';
 import { LocationUpdateDto } from './dto/location-update.dto';
 import { PayoutRequestDto } from './dto/payout-request.dto';
+import { ClockInDto } from './dto/clock-in.dto';
+import { ClockOutDto } from './dto/clock-out.dto';
 
 @ApiTags('Service Provider')
 @Controller('service-provider')
@@ -34,6 +36,13 @@ export class ServiceProviderController {
     @ApiOperation({ summary: 'Get provider profile' })
     async getProfile(@Param('id') id: string) {
         return this.providerService.getProfile(id);
+    }
+    
+    @Post(':id/fcm-token')
+    @ApiOperation({ summary: 'Update FCM token for push notifications' })
+    async updateFcmToken(@Param('id') id: string, @Body('fcmToken') fcmToken: string) {
+        console.log(`FCM token update request - Provider ID: ${id}, Token: ${fcmToken}`);
+        return this.providerService.updateFcmToken(id, fcmToken);
     }
 
     @Patch(':id/profile')
@@ -79,12 +88,14 @@ export class ServiceProviderController {
     @Get(':id/jobs/nearby')
     @ApiOperation({ summary: 'Get nearby job requests' })
     async getNearbyJobs(@Param('id') id: string) {
+        console.log(`[Controller] Fetching nearby jobs for Provider/User: ${id}`);
         return this.providerService.getNearbyJobs(id);
     }
 
     @Post(':id/jobs/:jobId/accept')
     @ApiOperation({ summary: 'Accept a job request' })
     async acceptJob(@Param('id') id: string, @Param('jobId') jobId: string) {
+        console.log(`[Controller] Accept request - Provider/User: ${id}, Job: ${jobId}`);
         return this.providerService.acceptJob(id, jobId);
     }
 
@@ -95,6 +106,7 @@ export class ServiceProviderController {
         @Param('jobId') jobId: string,
         @Body() dto: JobActionDto,
     ) {
+        console.log(`[Controller] Reject request - Provider/User: ${id}, Job: ${jobId}, Reason: ${dto.reason}`);
         return this.providerService.rejectJob(id, jobId, dto);
     }
 
@@ -133,6 +145,7 @@ export class ServiceProviderController {
     @Post(':id/location')
     @ApiOperation({ summary: 'Update live location' })
     async updateLocation(@Param('id') id: string, @Body() dto: LocationUpdateDto) {
+        console.log(`[Controller] Location update for Provider: ${id}`);
         return this.providerService.updateLocation(id, dto);
     }
 
@@ -214,6 +227,37 @@ export class ServiceProviderController {
     @Get(':id/jobs/active')
     @ApiOperation({ summary: 'Get current active job' })
     async getActiveJob(@Param('id') id: string) {
+        console.log(`[Controller] Fetching active job for Provider: ${id}`);
         return this.providerService.getActiveJob(id);
+    }
+
+    // ==================== CLOCK-IN & CLOCK-OUT (FR-PAY-003) ====================
+
+    @Post(':id/clock-in')
+    @ApiOperation({ 
+        summary: 'Clock-in for assigned shift',
+        description: 'Providers shall clock-in with GPS distance validation and device tracking'
+    })
+    @ApiResponse({ status: 201, description: 'Attendance started successfully' })
+    @ApiResponse({ status: 400, description: 'Double clock-in, invalid GPS, or timezone mismatch' })
+    @ApiResponse({ status: 404, description: 'Provider or Shift assignment not found' })
+    async clockIn(@Param('id') id: string, @Body() dto: ClockInDto) {
+        return this.providerService.clockIn(id, dto);
+    }
+
+    @Post(':id/clock-out/:attendanceId')
+    @ApiOperation({ 
+        summary: 'Clock-out of shift',
+        description: 'Providers shall clock-out, calculating hours worked and updating ledger'
+    })
+    @ApiResponse({ status: 200, description: 'Clock-out completed successfully' })
+    @ApiResponse({ status: 400, description: 'Already clocked out or invalid timestamp' })
+    @ApiResponse({ status: 404, description: 'Attendance record not found' })
+    async clockOut(
+        @Param('id') id: string, 
+        @Param('attendanceId') attendanceId: string,
+        @Body() dto?: ClockOutDto
+    ) {
+        return this.providerService.clockOut(id, attendanceId, dto);
     }
 }

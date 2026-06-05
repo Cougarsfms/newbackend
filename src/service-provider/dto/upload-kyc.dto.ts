@@ -4,8 +4,8 @@ export class UploadKycDto {
     @ApiProperty({ description: 'Type of document (AADHAR, PAN, DRIVING_LICENSE)', example: 'AADHAR' })
     documentType: string;
 
-    @ApiProperty({ description: 'URL of the uploaded file' })
-    fileUrl: string;
+    @ApiProperty({ description: 'URL of the uploaded file', required: false })
+    fileUrl?: string;
 
     @ApiProperty({ description: 'Aadhaar number (12 digits)', required: false })
     aadhaarNumber?: string;
