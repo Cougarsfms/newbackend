@@ -178,4 +178,11 @@ export class CustomerController {
     async raiseTicket(@Param('id') id: string, @Body() body: { bookingId: string; message: string }) {
         return this.customerService.raiseTicket(id, body.bookingId, body.message);
     }
+
+    @Get(':id/referral/stats')
+    @ApiOperation({ summary: 'Get referral stats and earnings' })
+    async getReferralStats(@Param('id') id: string) {
+        return this.customerService.getReferralStats(id);
+    }
 }
+

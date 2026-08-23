@@ -4,6 +4,7 @@ import { Role } from '@prisma/client';
 import { ApiTags, ApiOperation, ApiQuery, ApiParam, ApiBody, ApiResponse } from '@nestjs/swagger';
 
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
+import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { UpdateKycStatusDto } from './dto/update-kyc-status.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { CreatePricingRuleDto } from './dto/create-pricing-rule.dto';
@@ -69,6 +70,24 @@ export class AdminController {
         // Mock Admin ID for now
         const adminId = 'mock-admin-id';
         return this.adminService.updateUserStatus(id, body.status, body.reason, adminId);
+    }
+
+    @Patch('users/:id/role')
+    @ApiOperation({
+        summary: 'Update user role',
+        description: 'Update the role of a user (e.g. CUSTOMER, PROVIDER, TEAM_LEADER, ADMIN) with audit logging',
+        tags: ['User Management'],
+    })
+    @ApiParam({ name: 'id', description: 'User ID' })
+    @ApiBody({ type: UpdateUserRoleDto })
+    @ApiResponse({ status: 200, description: 'User role updated successfully' })
+    @ApiResponse({ status: 404, description: 'User not found' })
+    async updateUserRole(
+        @Param('id') id: string,
+        @Body() body: UpdateUserRoleDto,
+    ) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.updateUserRole(id, body.role, adminId);
     }
 
     // FR-UM-004
@@ -535,6 +554,23 @@ export class AdminController {
     ) {
         const adminId = 'mock-admin-id';
         return this.adminService.updateServiceProviderStatus(id, status, adminId);
+    }
+
+    @Patch('service-providers/:id/assign-tl')
+    @ApiOperation({
+        summary: 'Assign Team Leader to Service Provider',
+        description: 'Assign a Team Leader to a Service Provider, or unassign if teamLeaderId is empty/null',
+        tags: ['Service Provider Management'],
+    })
+    @ApiParam({ name: 'id', description: 'Service Provider ID' })
+    @ApiBody({ schema: { type: 'object', properties: { teamLeaderId: { type: 'string', nullable: true } } } })
+    @ApiResponse({ status: 200, description: 'Team Leader assigned successfully' })
+    async assignTeamLeader(
+        @Param('id') id: string,
+        @Body('teamLeaderId') teamLeaderId?: string | null,
+    ) {
+        const adminId = 'mock-admin-id';
+        return this.adminService.assignTeamLeader(id, teamLeaderId, adminId);
     }
 
     @Delete('service-providers/:id')

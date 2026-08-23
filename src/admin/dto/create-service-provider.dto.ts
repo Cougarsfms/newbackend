@@ -45,4 +45,9 @@ export class CreateServiceProviderDto {
     @IsOptional()
     @IsString({ each: true })
     itemIds?: string[];
+
+    @ApiPropertyOptional({ example: 'team-leader-user-uuid', description: 'Assigned Team Leader User ID' })
+    @IsOptional()
+    @IsString()
+    teamLeaderId?: string;
 }

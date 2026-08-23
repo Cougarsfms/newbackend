@@ -10,6 +10,8 @@ import { AdminModule } from './admin/admin.module';
 import { ServiceProviderModule } from './service-provider/service-provider.module';
 import { CustomerModule } from './customer/customer.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { SmsModule } from './sms/sms.module';
+import { ConciergeModule } from './concierge/concierge.module';
 
 @Module({
   imports: [
@@ -21,7 +23,9 @@ import { NotificationsModule } from './notifications/notifications.module';
     AdminModule,
     ServiceProviderModule,
     CustomerModule,
-    NotificationsModule
+    NotificationsModule,
+    SmsModule,
+    ConciergeModule,
   ],
   controllers: [AppController],
   providers: [AppService],

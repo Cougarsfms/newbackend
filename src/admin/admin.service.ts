@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { User, Prisma, Role, BookingStatus, Booking, FraudFlag } from '@prisma/client';
+import * as crypto from 'crypto';
 import { CreatePricingRuleDto } from './dto/create-pricing-rule.dto';
 import { CreateSurgeRuleDto } from './dto/create-surge-rule.dto';
 import { CreateServiceProviderDto } from './dto/create-service-provider.dto';
@@ -66,6 +67,49 @@ export class AdminService {
                     admin_id: adminId,
                     action: `USER_STATUS_UPDATE_${status}`,
                     details: reason,
+                }
+            });
+        } catch (e) {
+            console.error("Audit log creation failed: ", e);
+        }
+
+        return updatedUser;
+    }
+
+    async updateUserRole(
+        userId: string,
+        role: Role,
+        adminId: string,
+    ): Promise<User> {
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new NotFoundException('User not found');
+
+        let passwordHash = user.passwordHash;
+        
+        // If they are promoted to TEAM_LEADER and don't have a password set, set default to '123456'
+        if (role === 'TEAM_LEADER' && !passwordHash) {
+            const salt = crypto.randomBytes(16).toString('hex');
+            const hash = crypto
+                .pbkdf2Sync('123456', salt, 100_000, 64, 'sha512')
+                .toString('hex');
+            passwordHash = `${salt}:${hash}`;
+        }
+
+        const updatedUser = await this.prisma.user.update({
+            where: { id: userId },
+            data: { 
+                role,
+                passwordHash
+            },
+        });
+
+        // Create Audit Log
+        try {
+            await this.prisma.auditLog.create({
+                data: {
+                    admin_id: adminId,
+                    action: `USER_ROLE_UPDATE_${role}`,
+                    details: `Updated role of user ${userId} to ${role}`,
                 }
             });
         } catch (e) {
@@ -683,7 +727,8 @@ export class AdminService {
                 user: true, 
                 providerProfiles: true, 
                 categories: true, 
-                items: true 
+                items: true,
+                teamLeader: true
             },
             orderBy: { createdAt: 'desc' },
         });
@@ -697,7 +742,8 @@ export class AdminService {
                 providerProfiles: true, 
                 availabilities: true, 
                 categories: true, 
-                items: true 
+                items: true,
+                teamLeader: true
             },
         });
         if (!provider) throw new NotFoundException('Service provider not found');
@@ -709,6 +755,14 @@ export class AdminService {
         const user = await this.prisma.user.findUnique({ where: { id: data.user_id } });
         if (!user) throw new NotFoundException(`User with id ${data.user_id} not found`);
 
+        if (data.teamLeaderId) {
+            const tl = await this.prisma.user.findUnique({ where: { id: data.teamLeaderId } });
+            if (!tl) throw new NotFoundException('Team Leader user not found');
+            if (tl.role !== 'TEAM_LEADER') {
+                throw new BadRequestException('Selected user is not a Team Leader');
+            }
+        }
+
         return this.prisma.serviceProvider.create({
             data: {
                 user_id: data.user_id,
@@ -717,6 +771,7 @@ export class AdminService {
                 city: data.city,
                 yearsOfExperience: data.yearsOfExperience ?? 0,
                 status: data.status ?? 'PENDING',
+                teamLeaderId: data.teamLeaderId || null,
                 categories: data.categoryIds ? {
                     connect: data.categoryIds.map(id => ({ id }))
                 } : undefined,
@@ -724,7 +779,7 @@ export class AdminService {
                     connect: data.itemIds.map(id => ({ id }))
                 } : undefined,
             },
-            include: { user: true, categories: true, items: true },
+            include: { user: true, categories: true, items: true, teamLeader: true },
         });
     }
 
@@ -732,6 +787,14 @@ export class AdminService {
         console.log(`[AdminService] Updating provider ${id} with data:`, JSON.stringify(data, null, 2));
         const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
         if (!provider) throw new NotFoundException('Service provider not found');
+
+        if (data.teamLeaderId) {
+            const tl = await this.prisma.user.findUnique({ where: { id: data.teamLeaderId } });
+            if (!tl) throw new NotFoundException('Team Leader user not found');
+            if (tl.role !== 'TEAM_LEADER') {
+                throw new BadRequestException('Selected user is not a Team Leader');
+            }
+        }
 
         return this.prisma.serviceProvider.update({
             where: { id },
@@ -741,6 +804,7 @@ export class AdminService {
                 city: data.city,
                 yearsOfExperience: data.yearsOfExperience,
                 status: data.status,
+                teamLeaderId: data.teamLeaderId === '' ? null : (data.teamLeaderId !== undefined ? data.teamLeaderId : undefined),
                 categories: data.categoryIds ? {
                     set: data.categoryIds.map(id => ({ id }))
                 } : undefined,
@@ -748,8 +812,46 @@ export class AdminService {
                     set: data.itemIds.map(id => ({ id }))
                 } : undefined,
             },
-            include: { user: true, categories: true, items: true },
+            include: { user: true, categories: true, items: true, teamLeader: true },
         });
+    }
+
+    async assignTeamLeader(providerId: string, teamLeaderId: string | null | undefined, adminId: string) {
+        const provider = await this.prisma.serviceProvider.findUnique({ where: { id: providerId } });
+        if (!provider) throw new NotFoundException('Service provider not found');
+
+        if (teamLeaderId) {
+            const tl = await this.prisma.user.findUnique({ where: { id: teamLeaderId } });
+            if (!tl) throw new NotFoundException('Team Leader user not found');
+            if (tl.role !== 'TEAM_LEADER') {
+                throw new BadRequestException('Selected user is not a Team Leader');
+            }
+        }
+
+        const targetTlId = teamLeaderId === '' ? null : (teamLeaderId || null);
+
+        const updated = await this.prisma.serviceProvider.update({
+            where: { id: providerId },
+            data: { teamLeaderId: targetTlId },
+            include: { user: true, categories: true, items: true, teamLeader: true }
+        });
+
+        // Audit Log
+        try {
+            await this.prisma.auditLog.create({
+                data: {
+                    admin_id: adminId,
+                    action: `PROVIDER_ASSIGN_TL`,
+                    details: targetTlId 
+                        ? `Assigned Team Leader ${targetTlId} to provider ${providerId}`
+                        : `Unassigned Team Leader from provider ${providerId}`,
+                },
+            });
+        } catch (e) {
+            console.error('Audit log creation failed:', e);
+        }
+
+        return updated;
     }
 
     async updateServiceProviderStatus(id: string, status: string, adminId: string) {

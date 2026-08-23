@@ -6,4 +6,7 @@ export class RegisterCustomerDto {
 
     @ApiProperty({ description: 'Full name', example: 'Jane Doe', required: false })
     name?: string;
+
+    @ApiProperty({ description: 'Referral code of the referring customer', example: 'JANE1234', required: false })
+    referralCode?: string;
 }

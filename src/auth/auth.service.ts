@@ -1,44 +1,40 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
-// import * as admin from 'firebase-admin';
+import { OtpService } from '../sms/otp.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { TlLoginDto } from './dto/tl-auth.dto';
+import { User } from '@prisma/client';
+import * as crypto from 'crypto';
+
+function verifyPassword(password: string, stored: string): boolean {
+  const [salt, storedHash] = stored.split(':');
+  const hash = crypto
+    .pbkdf2Sync(password, salt, 100_000, 64, 'sha512')
+    .toString('hex');
+  return hash === storedHash;
+}
+
+function generateTlToken(user: { id: string; phoneNumber: string; role: string }): string {
+  const payload = Buffer.from(
+    JSON.stringify({ sub: user.id, phoneNumber: user.phoneNumber, role: user.role, iat: Date.now() }),
+  ).toString('base64');
+  return `tlapp.${payload}.mock`;
+}
 
 @Injectable()
 export class AuthService {
-  constructor(private usersService: UsersService) { }
-
-  // Mock OTP storage (In production use Redis or DB)
-  private otpStore = new Map<string, string>();
+  constructor(
+    private usersService: UsersService,
+    private otpService: OtpService,
+    private prisma: PrismaService,
+  ) { }
 
   async sendOtp(mobileNumber: string) {
-    if (!mobileNumber) {
-      throw new BadRequestException('Mobile number is required');
-    }
-
-    // Generate 4-digit OTP (Mock: always 1234 for easy testing)
-    const otp = '1234';
-
-    console.log(`[AuthService] Generated OTP for ${mobileNumber}: ${otp}`);
-    this.otpStore.set(mobileNumber, otp);
-
-    return {
-      success: true,
-      message: 'OTP sent successfully',
-      data: {
-        verificationId: 'mock_vid_' + Date.now()
-      }
-    };
+    return this.otpService.sendOtp(mobileNumber);
   }
 
   async verifyOtp(mobileNumber: string, otp: string) {
-    const storedOtp = this.otpStore.get(mobileNumber);
-
-    // Allow '1234' as universal bypass for development
-    if (storedOtp !== otp && otp !== '1234') {
-      throw new UnauthorizedException('Invalid OTP');
-    }
-
-    // Clear OTP after use
-    this.otpStore.delete(mobileNumber);
+    await this.otpService.verifyOtp(mobileNumber, otp);
 
     const user = await this.usersService.findOrCreate(mobileNumber);
 
@@ -77,47 +73,167 @@ export class AuthService {
 
       // Ensure we get customers relation
       const user = await this.usersService.findOrCreate(phoneNumber);
-      // findOrCreate returns User, does it include customers? Probably not by default.
-      // We need to fetch it or ensure usersService returns it.
-
-      // Let's assume we need to fetch customer explicitly if not present
-      // But usersService.findOrCreate is external. 
-      // Let's modify usersService or just fetch customer here.
-      // Ideally AuthService should use UsersService. 
-
-      // Quick fix: Since we can't easily see UsersService here without another call,
-      // and we know CustomerService creates the customer...
-      // Actually, let's look at CustomerService.register. It handles creation.
-      // AuthService logic is a bit duplicated or separated.
-
-      // Let's assume for now we return the user and the frontend relies on `verifyOtp` from `CustomerService`?
-      // No, frontend calls `AuthService.login` (this one) -> `auth/login`.
-
-      // I will assume UsersService.findOrCreate creates a user. 
-      // I need to find the CUSTOMER associated with this user.
-      // I'll skip the Prisma call here because I don't have PrismaService injected directly (it has UsersService).
-
-      // Wait, `AuthService` (Back) has `UsersService`. 
-      // `UsersService` likely has access to Prisma.
-
-      // I'll leave the backend `login` as is for a moment and check `UsersService`.
-      // If I can't easily get `customerId`, I'm stuck.
-
-      // Alternative: Use `userId` as `customerId` if flexible, or fetch it.
 
       return {
         success: true,
         data: {
           user: {
             ...user,
-            // creating a fake customerId if missing, or we need to really fetch it.
-            customerId: 'cust_' + user.id // Mock link if real one missing
+            customerId: 'cust_' + user.id
           },
           token: 'mock-jwt-token-for-' + user.id
         }
       };
     } catch (error) {
-      // ...
+      throw new UnauthorizedException('Firebase authentication failed');
     }
+  }
+
+  async tlLogin(dto: TlLoginDto) {
+    const { phoneNumber, email, password } = dto;
+    if (!phoneNumber && !email) {
+      throw new BadRequestException('Either phone number or email is required');
+    }
+
+    let user: User | null = null;
+    if (phoneNumber) {
+      const cleaned = phoneNumber.replace(/\D/g, '').slice(-10);
+      user = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { phoneNumber: cleaned },
+            { phoneNumber: '+91' + cleaned },
+            { phoneNumber: '+91-' + cleaned }
+          ]
+        }
+      });
+    } else if (email) {
+      user = await this.prisma.user.findUnique({
+        where: { email }
+      });
+    }
+
+    if (!user) {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'TEAM_LEADER_LOGIN_FAIL',
+          details: `User not found for identifier: ${phoneNumber || email}`,
+        },
+      });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (user.role !== 'TEAM_LEADER') {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'TEAM_LEADER_LOGIN_FAIL',
+          details: `User ${user.id} attempted to log in as Team Leader, but has role ${user.role}`,
+        },
+      });
+      throw new UnauthorizedException('Access denied: not a Team Leader');
+    }
+
+    if (!user.passwordHash) {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'TEAM_LEADER_LOGIN_FAIL',
+          details: `User ${user.id} has no password set.`,
+        },
+      });
+      throw new UnauthorizedException('Password not set. Please contact support.');
+    }
+
+    const valid = verifyPassword(password, user.passwordHash);
+    if (!valid) {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'TEAM_LEADER_LOGIN_FAIL',
+          details: `Incorrect password for user ${user.id}`,
+        },
+      });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'TEAM_LEADER_LOGIN_SUCCESS',
+        details: `Successful login for user ${user.id} (${user.phoneNumber})`,
+      },
+    });
+
+    const token = generateTlToken({
+      id: user.id,
+      phoneNumber: user.phoneNumber,
+      role: user.role,
+    });
+
+    return {
+      success: true,
+      data: {
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          phoneNumber: user.phoneNumber,
+          email: user.email,
+          role: user.role,
+          status: user.status,
+        },
+      },
+    };
+  }
+
+  async verifyTlToken(authHeader?: string): Promise<{ id: string; phoneNumber: string; role: string }> {
+    if (!authHeader) {
+      throw new BadRequestException('Authorization header is required');
+    }
+
+    const parts = authHeader.split(' ');
+    if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer') {
+      throw new UnauthorizedException('Invalid Authorization header format');
+    }
+
+    const token = parts[1];
+    if (!token.startsWith('tlapp.') || !token.endsWith('.mock')) {
+      throw new UnauthorizedException('Invalid mock token signature or prefix');
+    }
+
+    const middle = token.substring(6, token.length - 5);
+    let payload: any;
+    try {
+      const decodedJson = Buffer.from(middle, 'base64').toString('utf8');
+      payload = JSON.parse(decodedJson);
+    } catch {
+      throw new UnauthorizedException('Invalid mock token payload encoding');
+    }
+
+    const userId = payload.sub;
+    const role = payload.role;
+
+    if (role !== 'TEAM_LEADER' || !userId) {
+      throw new UnauthorizedException('Access denied: not a Team Leader');
+    }
+
+    return {
+      id: userId,
+      phoneNumber: payload.phoneNumber,
+      role,
+    };
+  }
+
+  async tlLogout(authHeader?: string) {
+    const verified = await this.verifyTlToken(authHeader);
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'TEAM_LEADER_LOGOUT_SUCCESS',
+        details: `Successful logout for Team Leader with user ID: ${verified.id}`,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Logout successful',
+    };
   }
 }

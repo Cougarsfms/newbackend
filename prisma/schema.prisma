@@ -11,6 +11,7 @@ enum Role {
   CUSTOMER
   PROVIDER
   ADMIN
+  TEAM_LEADER
 }
 
 model User {
@@ -19,6 +20,7 @@ model User {
   email       String?   @unique
   name        String?
   role        Role      @default(CUSTOMER)
+  passwordHash String?
   bookings    Booking[]
 
   status String @default("ACTIVE")
@@ -30,6 +32,11 @@ model User {
   wallets          Wallet[]
   customers        Customer[]
   fcmToken         String?
+  leaveRequests    LeaveRequest[]
+  managedProviders ServiceProvider[] @relation("TeamLeaderProviders")
+  sentMessages     ChatMessage[]     @relation("SentMessages")
+  receivedMessages ChatMessage[]     @relation("ReceivedMessages")
+  notifications    Notification[]
 }
 
 model ServiceCategory {
@@ -187,11 +194,11 @@ model AdminUser {
 }
 
 model AuditLog {
-  id         String    @id @default(uuid())
-  admin_id   String
-  admin_user AdminUser @relation(fields: [admin_id], references: [id])
+  id         String     @id @default(uuid())
+  admin_id   String?
+  admin_user AdminUser? @relation(fields: [admin_id], references: [id])
   action     String
-  action_at  DateTime  @default(now())
+  action_at  DateTime   @default(now())
   details    String?
 }
 
@@ -252,6 +259,12 @@ model ServiceProvider {
   providerAddresses  ProviderAddress[]
   categories         ServiceCategory[]
   items              ServiceItem[]
+  teamLeaderId       String?
+  teamLeader         User?               @relation("TeamLeaderProviders", fields: [teamLeaderId], references: [id])
+  attendances        provider_Attendance[]
+  shiftAssignments   provider_Shift_Assignments[]
+  escalations        Escalation[]
+  issuedInventory    IssuedInventory[]
 }
 
 model ProviderProfile {
@@ -405,6 +418,10 @@ model Customer {
   status             String              @default("PENDING")
   trust_score        Int                 @default(0)
   isOnboarded        Boolean             @default(false)
+  referralCode       String?             @unique
+  referredById       String?
+  referredBy         Customer?           @relation("CustomerReferrals", fields: [referredById], references: [id])
+  referredUsers      Customer[]          @relation("CustomerReferrals")
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   customerViolations CustomerViolation[]
@@ -415,6 +432,7 @@ model Customer {
   customerBookings   CustomerBooking[]
   supportTickets     SupportTicket[]
   purchasedCoupons   PurchasedCoupon[]
+  conciergeSessions  ConciergeSession[]
 }
 
 model CustomerViolation {
@@ -481,6 +499,7 @@ model CustomerWalletLedger {
   CustomerWallet_id String
   CustomerWallet    CustomerWallet @relation(fields: [CustomerWallet_id], references: [id])
   amount            Decimal        @default(0)
+  description       String?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 }
@@ -502,6 +521,7 @@ model CustomerBooking {
   trackingEvents TrackingEvent[]
   payments       Payment[]
   supportTickets SupportTicket[]
+  escalations    Escalation[]
 }
 
 model TrackingEvent {
@@ -588,12 +608,16 @@ model provider_Shift_Type{
   attendancePercent Int @default(90)
   targetJobs Int @default(5)
   status String @default("ACTIVE")
+  attendances        provider_Attendance[]
+  shiftAssignments   provider_Shift_Assignments[]
 }
 
 model provider_Shift_Assignments{
   id String @id @default(uuid())
   provider_id String
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
   shift_type_id String
+  shift_type    provider_Shift_Type @relation(fields: [shift_type_id], references: [id])
   assignment_date DateTime @default(now())
   Status String @default("PENDING")
   created_at DateTime @default(now())
@@ -603,7 +627,9 @@ model provider_Shift_Assignments{
 model provider_Attendance{
   id String @id @default(uuid())
   provider_id String 
+  provider    ServiceProvider @relation(fields: [provider_id], references: [id])
   shift_type_id String
+  shift_type    provider_Shift_Type @relation(fields: [shift_type_id], references: [id])
   attendance_date DateTime @default(now())
   in_time DateTime 
   out_time DateTime?
@@ -648,4 +674,109 @@ model adminNotification {
   entityId  String   // KYCRecord ID or providerId
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
+}
+
+model LeaveRequest {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  type        String   // "SICK", "CASUAL", "PAID"
+  fromDate    DateTime
+  toDate      DateTime
+  reason      String
+  status      String   @default("PENDING") // "PENDING", "APPROVED", "REJECTED"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Escalation {
+  id                 String           @id @default(uuid())
+  provider_id        String
+  provider           ServiceProvider  @relation(fields: [provider_id], references: [id])
+  customerbooking_id String?
+  customerbooking    CustomerBooking? @relation(fields: [customerbooking_id], references: [id])
+  title              String
+  description        String
+  status             String           @default("OPEN") // "OPEN", "IN_PROGRESS", "RESOLVED"
+  priority           String           @default("MEDIUM") // "LOW", "MEDIUM", "HIGH"
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+}
+
+model ChatMessage {
+  id          String   @id @default(uuid())
+  senderId    String
+  sender      User     @relation("SentMessages", fields: [senderId], references: [id])
+  receiverId  String
+  receiver    User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  message     String
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  title       String
+  body        String
+  type        String   @default("GENERAL") // e.g. "LEAVE_REQUESTED", "ESCALATION_OPENED"
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model InventoryItem {
+  id                String            @id @default(uuid())
+  name              String
+  description       String?
+  totalQuantity     Int               @default(0)
+  availableQuantity Int               @default(0)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  issuedItems       IssuedInventory[]
+}
+
+model IssuedInventory {
+  id            String          @id @default(uuid())
+  provider_id   String
+  provider      ServiceProvider @relation(fields: [provider_id], references: [id])
+  item_id       String
+  item          InventoryItem   @relation(fields: [item_id], references: [id])
+  quantity      Int             @default(1)
+  status        String          @default("ISSUED") // "ISSUED", "RETURNED", "DAMAGED", "LOST"
+  issuedAt      DateTime        @default(now())
+  returnedAt    DateTime?
+  remarks       String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+model ConciergeSession {
+  id          String                @id @default(uuid())
+  customerId  String
+  customer    Customer              @relation(fields: [customerId], references: [id])
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  messages    ConciergeMessage[]
+  auditLogs   ConciergeAuditLog[]
+}
+
+model ConciergeMessage {
+  id          String            @id @default(uuid())
+  sessionId   String
+  session     ConciergeSession  @relation(fields: [sessionId], references: [id])
+  sender      String            // "USER" or "AI"
+  text        String
+  createdAt   DateTime          @default(now())
+}
+
+model ConciergeAuditLog {
+  id          String            @id @default(uuid())
+  sessionId   String
+  session     ConciergeSession  @relation(fields: [sessionId], references: [id])
+  actionType  String            // "USER_INPUT", "LLM_DECISION", "TOOL_CALL", "TOOL_RESPONSE", "PROPOSAL", "EXECUTION"
+  details     String            // JSON payload
+  createdAt   DateTime          @default(now())
 }

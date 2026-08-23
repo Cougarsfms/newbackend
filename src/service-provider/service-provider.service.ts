@@ -9,13 +9,15 @@ import { PayoutRequestDto } from './dto/payout-request.dto';
 import { JobActionDto } from './dto/job-action.dto';
 import { Role } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
+import { OtpService } from '../sms/otp.service';
 
 @Injectable()
 export class ServiceProviderService {
     constructor(
         private prisma: PrismaService,
         private jwtService: JwtService,
-        private notifications: NotificationsService
+        private notifications: NotificationsService,
+        private otpService: OtpService,
     ) { }
 
     private async notifyCustomer(bookingId: string, title: string, body: string, status: string, extraData: any = {}) {
@@ -63,7 +65,12 @@ export class ServiceProviderService {
         });
 
         if (existingProvider) {
-            return { message: 'Provider already registered', provider: existingProvider };
+            const otpResult = await this.otpService.sendOtp(dto.phoneNumber);
+            return {
+                message: otpResult.message,
+                provider: existingProvider,
+                data: otpResult.data,
+            };
         }
 
         const provider = await this.prisma.serviceProvider.create({
@@ -122,15 +129,17 @@ export class ServiceProviderService {
             },
         });
 
-        // Trigger OTP generation here (mocked)
-        return { message: 'OTP sent to mobile number', providerId: provider.id };
+        // Trigger OTP generation and dispatch via OtpService
+        const otpResult = await this.otpService.sendOtp(dto.phoneNumber);
+        return {
+            message: otpResult.message,
+            providerId: provider.id,
+            data: otpResult.data,
+        };
     }
 
     async verifyOtp(phoneNumber: string, otp: string) {
-        // Mock OTP verification
-        if (otp !== '1234') {
-            throw new BadRequestException('Invalid OTP');
-        }
+        await this.otpService.verifyOtp(phoneNumber, otp);
 
         let user = await this.prisma.user.findUnique({
             where: { phoneNumber },

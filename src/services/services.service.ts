@@ -23,6 +23,33 @@ export class ServicesService {
     });
   }
 
+  async findFiltered(category?: string, search?: string) {
+    const where: any = {};
+
+    if (category) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(category);
+      if (isUuid) {
+        where.categoryId = category;
+      } else {
+        where.category = {
+          name: { contains: category, mode: 'insensitive' }
+        };
+      }
+    }
+
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } }
+      ];
+    }
+
+    return this.prisma.serviceItem.findMany({
+      where,
+      include: { category: true }
+    });
+  }
+
   // Seeding helper (dev only)
   async seed() {
     const count = await this.prisma.serviceCategory.count();

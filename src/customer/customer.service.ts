@@ -7,10 +7,14 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
 import { RateProviderDto } from './dto/rate-provider.dto';
 import { Role } from '@prisma/client';
+import { OtpService } from '../sms/otp.service';
 
 @Injectable()
 export class CustomerService {
-    constructor(private prisma: PrismaService) { }
+    constructor(
+        private prisma: PrismaService,
+        private otpService: OtpService,
+    ) { }
 
     // ==================== ACCOUNT MANAGEMENT ====================
 
@@ -35,6 +39,18 @@ export class CustomerService {
         });
 
         if (!customer) {
+            let referredByCustomer: any = null;
+            if (dto.referralCode) {
+                referredByCustomer = await this.prisma.customer.findUnique({
+                    where: { referralCode: dto.referralCode },
+                });
+                if (!referredByCustomer) {
+                    throw new BadRequestException('Invalid referral code');
+                }
+            }
+
+            const referralCode = await this.generateUniqueReferralCode(dto.name || 'Guest');
+
             customer = await this.prisma.customer.create({
                 data: {
                     user_id: user.id,
@@ -42,21 +58,63 @@ export class CustomerService {
                     phoneNumber: dto.phoneNumber,
                     status: 'ACTIVE',
                     trust_score: 100,
+                    referralCode,
+                    referredById: referredByCustomer ? referredByCustomer.id : null,
                 },
             });
 
             // Create Wallet
-            await this.prisma.customerWallet.create({
+            const wallet = await this.prisma.customerWallet.create({
                 data: { customer_id: customer.id },
             });
+
+            // If referred, credit bonuses to wallets
+            if (referredByCustomer) {
+                // Reward referee (new customer): ₹50
+                await this.prisma.customerWallet.update({
+                    where: { id: wallet.id },
+                    data: { balance: { increment: 50 } },
+                });
+                await this.prisma.customerWalletLedger.create({
+                    data: {
+                        CustomerWallet_id: wallet.id,
+                        amount: 50,
+                        description: `Referral Reward: Joined using ${referredByCustomer.referralCode}`,
+                    },
+                });
+
+                // Reward referrer: ₹100
+                const referrerWallet = await this.prisma.customerWallet.findFirst({
+                    where: { customer_id: referredByCustomer.id },
+                });
+                if (referrerWallet) {
+                    await this.prisma.customerWallet.update({
+                        where: { id: referrerWallet.id },
+                        data: { balance: { increment: 100 } },
+                    });
+                    await this.prisma.customerWalletLedger.create({
+                        data: {
+                            CustomerWallet_id: referrerWallet.id,
+                            amount: 100,
+                            description: `Referral Reward: Referred ${customer.name}`,
+                        },
+                    });
+                }
+            }
         }
 
-        // Mock OTP
-        return { message: 'OTP sent to mobile number', customerId: customer.id };
+        // Send OTP via OtpService
+        const otpResult = await this.otpService.sendOtp(dto.phoneNumber);
+
+        return {
+            message: otpResult.message,
+            customerId: customer.id,
+            data: otpResult.data,
+        };
     }
 
     async verifyOtp(phoneNumber: string, otp: string) {
-        if (otp !== '1234') throw new BadRequestException('Invalid OTP');
+        await this.otpService.verifyOtp(phoneNumber, otp);
 
         const user = await this.prisma.user.findUnique({
             where: { phoneNumber },
@@ -446,5 +504,74 @@ export class CustomerService {
             include: { coupon: true },
             orderBy: { createdAt: 'desc' }
         });
+    }
+
+    async getReferralStats(customerId: string) {
+        const customer = await this.prisma.customer.findUnique({
+            where: { id: customerId },
+            include: {
+                referredUsers: {
+                    select: {
+                        id: true,
+                        name: true,
+                        createdAt: true,
+                    }
+                }
+            }
+        });
+
+        if (!customer) throw new NotFoundException('Customer not found');
+
+        // Lazy-generate referral code if missing
+        let referralCode = customer.referralCode;
+        if (!referralCode) {
+            referralCode = await this.generateUniqueReferralCode(customer.name);
+            await this.prisma.customer.update({
+                where: { id: customerId },
+                data: { referralCode },
+            });
+        }
+
+        // Sum up wallet ledger rewards for referral
+        const wallet = await this.prisma.customerWallet.findFirst({
+            where: { customer_id: customerId },
+        });
+
+        let totalEarned = 0;
+        if (wallet) {
+            const ledgers = await this.prisma.customerWalletLedger.findMany({
+                where: {
+                    CustomerWallet_id: wallet.id,
+                    description: { contains: 'Referral Reward' }
+                }
+            });
+            totalEarned = ledgers.reduce((sum, item) => sum + Number(item.amount), 0);
+        }
+
+        return {
+            referralCode,
+            totalReferred: customer.referredUsers.length,
+            totalEarned,
+            referredUsers: customer.referredUsers,
+        };
+    }
+
+    private async generateUniqueReferralCode(name: string): Promise<string> {
+        const cleanName = name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 5).toUpperCase() || 'REF';
+        let code = '';
+        let isUnique = false;
+        let attempts = 0;
+        while (!isUnique && attempts < 10) {
+            const rand = Math.floor(1000 + Math.random() * 9000);
+            code = `${cleanName}${rand}`;
+            const existing = await this.prisma.customer.findUnique({
+                where: { referralCode: code },
+            });
+            if (!existing) {
+                isUnique = true;
+            }
+            attempts++;
+        }
+        return code;
     }
 }
