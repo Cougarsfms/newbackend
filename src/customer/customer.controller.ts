@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Put, Param, Query, Delete, Req } from '@nestjs/common';
+import { Controller, Post, Body, Get, Put, Param, Query, Delete, Req, Headers, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CustomerService } from './customer.service';
 import { RegisterCustomerDto } from './dto/register-customer.dto';
@@ -6,6 +6,8 @@ import { UpdateCustomerProfileDto } from './dto/update-customer-profile.dto';
 import { AddAddressDto } from './dto/add-address.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
+import { CreatePaymentOrderDto } from './dto/create-payment-order.dto';
+import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { RateProviderDto } from './dto/rate-provider.dto';
 
 @ApiTags('Customer')
@@ -131,7 +133,127 @@ export class CustomerController {
         return this.customerService.getTracking(id, bookingId);
     }
 
-    // ==================== PAYMENTS ====================
+    // ==================== PAYMENTS (RAZORPAY) ====================
+
+    @Post(':id/payments/create-order')
+    @ApiOperation({ summary: 'Calculate authoritative price breakdown and create Razorpay payment order' })
+    async createPaymentOrder(@Param('id') id: string, @Body() dto: CreatePaymentOrderDto) {
+        return this.customerService.createPaymentOrder(id, dto);
+    }
+
+    @Post(':id/payments/verify')
+    @ApiOperation({ summary: 'Verify Razorpay payment signature and confirm booking' })
+    async verifyPayment(@Param('id') id: string, @Body() dto: VerifyPaymentDto) {
+        return this.customerService.verifyPayment(id, dto);
+    }
+
+    @Get('payments/checkout-page')
+    @ApiOperation({ summary: 'Render Razorpay Web Checkout Page' })
+    async renderCheckoutPage(
+        @Query('orderId') orderId: string,
+        @Query('amount') amount: string,
+        @Query('keyId') keyId: string,
+        @Query('bookingId') bookingId: string,
+        @Query('customerId') customerId: string,
+        @Res() res: any
+    ) {
+        const key = keyId || process.env.RAZORPAY_KEY_ID || 'rzp_test_TY1CYZc1ze5tTF';
+        const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Razorpay Checkout - Gyros Quick Services</title>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0F172A; color: #FFFFFF; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+    .card { background: #1E293B; padding: 28px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); text-align: center; max-width: 380px; width: 100%; border: 1px solid #334155; }
+    .logo { font-size: 24px; font-weight: 800; color: #FF7000; letter-spacing: -0.5px; margin-bottom: 4px; }
+    .subtitle { font-size: 12px; color: #94A3B8; margin-bottom: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+    .amount-box { background: #0F172A; padding: 16px; border-radius: 12px; margin: 20px 0; border: 1px solid #334155; }
+    .amount-label { font-size: 13px; color: #94A3B8; margin-bottom: 4px; }
+    .amount-val { font-size: 28px; font-weight: 800; color: #10B981; }
+    .btn { background: linear-gradient(135deg, #FF7000 0%, #FF5500 100%); color: white; border: none; padding: 16px 24px; border-radius: 14px; font-weight: 800; font-size: 16px; cursor: pointer; width: 100%; box-shadow: 0 4px 14px rgba(255,112,0,0.4); }
+    .btn:active { transform: scale(0.98); }
+    .footer { font-size: 11px; color: #64748B; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">⚡ Gyros Quick Services</div>
+    <div class="subtitle">Razorpay Secure Checkout</div>
+    <div class="amount-box">
+      <div class="amount-label">Payable Amount</div>
+      <div class="amount-val">₹${amount}</div>
+    </div>
+    <p style="font-size:13px; color:#CBD5E1; margin-bottom:20px;">Click below to open UPI (GPay, PhonePe, Paytm), Card or Netbanking</p>
+    <button id="rzp-button" class="btn">Pay ₹${amount} Now</button>
+    <div class="footer">🔒 256-bit SSL Encrypted • Powered by Razorpay</div>
+  </div>
+  <script>
+    var options = {
+      "key": "${key}",
+      "amount": "${Math.round(Number(amount) * 100)}",
+      "currency": "INR",
+      "name": "Gyros Quick Services",
+      "description": "Service Booking Payment",
+      "image": "https://i.imgur.com/3g7nmjc.png",
+      "order_id": "${orderId}",
+      "handler": function (response){
+        document.body.innerHTML = '<div class="card"><div class="logo">🎉 Payment Verified!</div><p>Confirming your booking...</p></div>';
+        fetch('/api/customer/${customerId}/payments/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            razorpayOrderId: response.razorpay_order_id,
+            razorpayPaymentId: response.razorpay_payment_id,
+            razorpaySignature: response.razorpay_signature,
+            bookingId: "${bookingId}"
+          })
+        }).then(r => r.json()).then(data => {
+          if (data.success || data.data?.paymentStatus === 'SUCCESS') {
+            document.body.innerHTML = '<div class="card"><div class="logo">✅ Booking Confirmed!</div><p>You can return to the Gyros App.</p></div>';
+            setTimeout(function() { window.location.href = "com.Gyors.customerapp://payment-success?bookingId=${bookingId}"; }, 1500);
+          } else {
+            alert("Payment verification failed. Please contact support.");
+          }
+        }).catch(err => {
+          alert("Verification error: " + err.message);
+        });
+      },
+      "modal": {
+        "ondismiss": function() {
+          console.log('Checkout dismissed');
+        }
+      },
+      "theme": { "color": "#FF7000" }
+    };
+    var rzp1 = new Razorpay(options);
+    document.getElementById('rzp-button').onclick = function(e){
+      rzp1.open();
+      e.preventDefault();
+    }
+    window.onload = function() {
+      setTimeout(function() { rzp1.open(); }, 500);
+    }
+  </script>
+</body>
+</html>
+        `;
+        res.setHeader('Content-Type', 'text/html');
+        return res.send(html);
+    }
+
+    @Post('payments/webhook')
+    @ApiOperation({ summary: 'Razorpay Payment Webhook listener' })
+    async razorpayWebhook(
+        @Body() body: any,
+        @Headers('x-razorpay-signature') signature: string,
+        @Req() req: any
+    ) {
+        const rawBody = typeof req.rawBody === 'string' ? req.rawBody : JSON.stringify(body);
+        return this.customerService.handleRazorpayWebhook(rawBody, signature);
+    }
 
     @Post(':id/payments/initiate')
     @ApiOperation({ summary: 'Initiate payment' })

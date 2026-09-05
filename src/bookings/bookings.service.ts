@@ -400,8 +400,8 @@ export class BookingsService {
     const endTime = new Date(booking.date);
     endTime.setMinutes(endTime.getMinutes() + 5); // 5-minute window to accept
 
-    const findNearby = (radiusKm: number) => {
-      console.log(`[Algorithm] Checking proximity/skill/clock-in for ${candidates.length} candidates within ${radiusKm}km...`);
+    const findNearby = (radiusKm: number, requireClockIn: boolean = true) => {
+      console.log(`[Algorithm] Checking proximity/skill for ${candidates.length} candidates (radius: ${radiusKm}km, requireClockIn: ${requireClockIn})...`);
       return candidates.filter((provider) => {
         // 1. Skill check
         let hasSkill = false;
@@ -410,8 +410,10 @@ export class BookingsService {
           const hasCategory = provider.categories.some(cat => cat.id === targetCategoryId);
           const profile = provider.providerProfiles[0];
           const hasLegacySkill = profile?.services.includes(targetCategoryId);
+          // If provider has no skills defined at all (new profile), allow fallback
+          const hasNoSkillsDefined = provider.items.length === 0 && provider.categories.length === 0 && (!profile || profile.services.length === 0);
 
-          hasSkill = hasItem || hasCategory || hasLegacySkill;
+          hasSkill = hasItem || hasCategory || hasLegacySkill || hasNoSkillsDefined;
 
           if (!hasSkill) {
             console.log(`[Algorithm] Provider ${provider.name} (${provider.id}) skipped: Missing skill for category ${targetCategoryId}.`);
@@ -427,21 +429,23 @@ export class BookingsService {
           return false;
         }
 
-        // 2. Clocked In check (active shift attendance)
-        const isClockedIn = provider.attendances && provider.attendances.length > 0;
-        if (!isClockedIn) {
-          console.log(`[Algorithm] Provider ${provider.name} (${provider.id}) note: No active clocked-in shift attendance.`);
-          // If candidate is online, allow notification so testing/demonstration works even if shifts aren't scheduled
+        // 2. Clocked In check
+        if (requireClockIn) {
+          const isClockedIn = provider.attendances && provider.attendances.length > 0;
+          if (!isClockedIn) {
+            console.log(`[Algorithm] Provider ${provider.name} (${provider.id}) skipped: Not clocked in.`);
+            return false;
+          }
         }
 
         let providerLat: number | null = avail.currentLatitude;
         let providerLng: number | null = avail.currentLongitude;
 
-        // 3. Proximity check (5km radius)
+        // 3. Proximity check
         let proximityMatched = false;
         let distance = -1;
 
-        if (providerLat !== null && providerLng !== null) {
+        if (providerLat !== null && providerLng !== null && (providerLat !== 0 || providerLng !== 0)) {
           distance = this.calculateDistance(customerLat, customerLng, providerLat, providerLng);
           proximityMatched = distance <= radiusKm;
           console.log(`[Algorithm] Provider ${provider.name} (${provider.id}) - Live distance: ${distance.toFixed(2)}km. Radius match (${radiusKm}km): ${proximityMatched}`);
@@ -459,6 +463,12 @@ export class BookingsService {
           }
         }
 
+        // If no lat/lng is recorded yet (0,0 or null), allow fallback proximity match for online providers
+        if (!proximityMatched && (providerLat === null || providerLat === 0)) {
+          console.log(`[Algorithm] Provider ${provider.name} (${provider.id}) - No GPS lat/lng recorded yet, allowing online fallback match.`);
+          proximityMatched = true;
+        }
+
         if (!proximityMatched) {
           console.log(`[Algorithm] Provider ${provider.name} (${provider.id}) skipped: Outside ${radiusKm}km (Found: ${distance > 0 ? distance.toFixed(2) : 'N/A'}km).`);
         }
@@ -467,17 +477,25 @@ export class BookingsService {
       });
     };
 
-    // Strictly find providers within 5KM (as per user requirement #16)
-    let nearbyProviders = findNearby(5);
+    // Tier 1: Strictly find providers within 5KM who are Clocked In (Req #16)
+    let nearbyProviders = findNearby(5, true);
 
+    // Tier 2: Fallback to 5KM online providers (if no clocked-in providers found)
     if (nearbyProviders.length === 0) {
-      console.warn(`[Algorithm] No skilled providers within 5km for booking ${bookingId}. Retrying within 10km fallback...`);
-      nearbyProviders = findNearby(10);
+      console.log(`[Algorithm] Tier 1 (5km Clocked-In) returned 0 candidates. Retrying Tier 2 (5km Online)...`);
+      nearbyProviders = findNearby(5, false);
     }
 
+    // Tier 3: Fallback to 10KM online providers
     if (nearbyProviders.length === 0) {
-      console.warn(`[Algorithm] No skilled providers found within radius for booking ${bookingId}. (Customer lat: ${customerLat}, lng: ${customerLng})`);
-      return;
+      console.log(`[Algorithm] Tier 2 returned 0 candidates. Retrying Tier 3 (10km Online)...`);
+      nearbyProviders = findNearby(10, false);
+    }
+
+    // Tier 4: Fallback to ALL online active candidates globally
+    if (nearbyProviders.length === 0) {
+      console.warn(`[Algorithm] Tier 3 returned 0 candidates. Broadcasting to all ${candidates.length} online candidate(s)...`);
+      nearbyProviders = candidates;
     }
 
     console.log(`[Algorithm] Broadcasting to ${nearbyProviders.length} provider(s) within range.`);

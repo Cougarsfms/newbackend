@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { User, Prisma, Role, BookingStatus, Booking, FraudFlag } from '@prisma/client';
 import * as crypto from 'crypto';
@@ -16,6 +16,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class AdminService {
+    private readonly logger = new Logger(AdminService.name);
+
     constructor(
         private prisma: PrismaService,
         private notifications: NotificationsService
@@ -487,6 +489,22 @@ export class AdminService {
         });
     }
 
+    // FR-FIN-003: Get All Payment Transactions for Admin Audit (AC 15)
+    async getPayments() {
+        return this.prisma.payment.findMany({
+            include: {
+                booking: {
+                    include: {
+                        user: true,
+                        service: true,
+                        provider: true,
+                    }
+                }
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+    }
+
     // FR-FIN-001: Get Wallet Ledger
     async getWalletLedger(walletId: string) {
         const wallet = await this.prisma.wallet.findUnique({ where: { id: walletId } });
@@ -561,140 +579,174 @@ export class AdminService {
 
     // FR-ANA-001: Dashboard Statistics
     async getDashboardStats() {
-        const now = new Date();
-        const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        try {
+            const now = new Date();
+            const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
-        // Current Month Data
-        const currentMonthUsers = await this.prisma.user.count({ where: { createdAt: { gte: startOfCurrentMonth } } });
-        const currentMonthBookings = await this.prisma.booking.count({ where: { createdAt: { gte: startOfCurrentMonth } } });
-        const currentMonthRevenueAgg = await this.prisma.booking.aggregate({
-            _sum: { totalAmount: true },
-            where: { createdAt: { gte: startOfCurrentMonth }, status: 'COMPLETED' },
-        });
-        const currentMonthRevenue = Number(currentMonthRevenueAgg._sum.totalAmount || 0);
+            const [
+                currentMonthUsers,
+                currentMonthBookings,
+                currentMonthRevenueAgg,
+                lastMonthUsers,
+                lastMonthBookings,
+                lastMonthRevenueAgg,
+                totalUsers,
+                activeUsers,
+                totalBookings,
+                totalRevenueAgg,
+                pendingBookings,
+                pendingKYC
+            ] = await Promise.all([
+                this.prisma.user.count({ where: { createdAt: { gte: startOfCurrentMonth } } }).catch(() => 0),
+                this.prisma.booking.count({ where: { createdAt: { gte: startOfCurrentMonth } } }).catch(() => 0),
+                this.prisma.booking.aggregate({ _sum: { totalAmount: true }, where: { createdAt: { gte: startOfCurrentMonth }, status: 'COMPLETED' } }).catch(() => ({ _sum: { totalAmount: null } })),
+                this.prisma.user.count({ where: { createdAt: { gte: startOfLastMonth, lt: startOfCurrentMonth } } }).catch(() => 0),
+                this.prisma.booking.count({ where: { createdAt: { gte: startOfLastMonth, lt: startOfCurrentMonth } } }).catch(() => 0),
+                this.prisma.booking.aggregate({ _sum: { totalAmount: true }, where: { createdAt: { gte: startOfLastMonth, lt: startOfCurrentMonth }, status: 'COMPLETED' } }).catch(() => ({ _sum: { totalAmount: null } })),
+                this.prisma.user.count().catch(() => 0),
+                this.prisma.user.count({ where: { status: 'ACTIVE' } }).catch(() => 0),
+                this.prisma.booking.count().catch(() => 0),
+                this.prisma.booking.aggregate({ _sum: { totalAmount: true }, where: { status: 'COMPLETED' } }).catch(() => ({ _sum: { totalAmount: null } })),
+                this.prisma.booking.count({ where: { status: 'PENDING' } }).catch(() => 0),
+                this.prisma.kYCRecord.count({ where: { status: 'PENDING' } }).catch(() => 0),
+            ]);
 
-        // Last Month Data
-        const lastMonthUsers = await this.prisma.user.count({ where: { createdAt: { gte: startOfLastMonth, lt: startOfCurrentMonth } } });
-        const lastMonthBookings = await this.prisma.booking.count({ where: { createdAt: { gte: startOfLastMonth, lt: startOfCurrentMonth } } });
-        const lastMonthRevenueAgg = await this.prisma.booking.aggregate({
-            _sum: { totalAmount: true },
-            where: { createdAt: { gte: startOfLastMonth, lt: startOfCurrentMonth }, status: 'COMPLETED' },
-        });
-        const lastMonthRevenue = Number(lastMonthRevenueAgg._sum.totalAmount || 0);
+            const currentMonthRevenue = Number(currentMonthRevenueAgg._sum.totalAmount || 0);
+            const lastMonthRevenue = Number(lastMonthRevenueAgg._sum.totalAmount || 0);
+            const totalRevenue = Number(totalRevenueAgg._sum.totalAmount || 0);
 
-        // Global Overalls
-        const totalUsers = await this.prisma.user.count();
-        const activeUsers = await this.prisma.user.count({ where: { status: 'ACTIVE' } });
-        const totalBookings = await this.prisma.booking.count();
-        const totalRevenueAgg = await this.prisma.booking.aggregate({ _sum: { totalAmount: true }, where: { status: 'COMPLETED' } });
-        const totalRevenue = Number(totalRevenueAgg._sum.totalAmount || 0);
-        const pendingBookings = await this.prisma.booking.count({ where: { status: 'PENDING' } });
-        const pendingKYC = await this.prisma.kYCRecord.count({ where: { status: 'PENDING' } });
+            const calcGrowth = (current: number, previous: number) => {
+                if (previous === 0) return current > 0 ? 100 : 0;
+                return Math.round(((current - previous) / previous) * 100);
+            };
 
-        // Growth metrics (percentage change)
-        const calcGrowth = (current: number, previous: number) => {
-            if (previous === 0) return current > 0 ? 100 : 0;
-            return Math.round(((current - previous) / previous) * 100);
-        };
-
-        return {
-            totalUsers,
-            activeUsers,
-            totalBookings,
-            pendingBookings,
-            totalRevenue,
-            pendingKYC,
-            usersGrowth: calcGrowth(currentMonthUsers, lastMonthUsers),
-            bookingsGrowth: calcGrowth(currentMonthBookings, lastMonthBookings),
-            revenueGrowth: calcGrowth(currentMonthRevenue, lastMonthRevenue),
-        };
+            return {
+                totalUsers,
+                activeUsers,
+                totalBookings,
+                pendingBookings,
+                totalRevenue,
+                revenue: totalRevenue,
+                pendingKYC,
+                usersGrowth: calcGrowth(currentMonthUsers, lastMonthUsers),
+                bookingsGrowth: calcGrowth(currentMonthBookings, lastMonthBookings),
+                revenueGrowth: calcGrowth(currentMonthRevenue, lastMonthRevenue),
+            };
+        } catch (error: any) {
+            this.logger.error(`getDashboardStats error: ${error.message}`, error.stack);
+            return {
+                totalUsers: 0,
+                activeUsers: 0,
+                totalBookings: 0,
+                pendingBookings: 0,
+                totalRevenue: 0,
+                revenue: 0,
+                pendingKYC: 0,
+                usersGrowth: 0,
+                bookingsGrowth: 0,
+                revenueGrowth: 0,
+            };
+        }
     }
 
     // FR-ANA-002: User Analytics
     async getUserAnalytics() {
-        const usersByRole = await this.prisma.user.groupBy({
-            by: ['role'],
-            _count: { id: true },
-        });
+        try {
+            const usersByRole = await this.prisma.user.groupBy({
+                by: ['role'],
+                _count: { id: true },
+            }).catch(() => []);
 
-        const usersByStatus = await this.prisma.user.groupBy({
-            by: ['status'],
-            _count: { id: true },
-        });
+            const usersByStatus = await this.prisma.user.groupBy({
+                by: ['status'],
+                _count: { id: true },
+            }).catch(() => []);
 
-        return {
-            byRole: usersByRole.map(item => ({
-                role: item.role,
-                count: item._count.id,
-            })),
-            byStatus: usersByStatus.map(item => ({
-                status: item.status,
-                count: item._count.id,
-            })),
-        };
+            return {
+                byRole: usersByRole.map(item => ({
+                    role: item.role,
+                    count: item._count.id,
+                })),
+                byStatus: usersByStatus.map(item => ({
+                    status: item.status,
+                    count: item._count.id,
+                })),
+            };
+        } catch (error: any) {
+            this.logger.error(`getUserAnalytics error: ${error.message}`, error.stack);
+            return { byRole: [], byStatus: [] };
+        }
     }
 
     // FR-ANA-003: Booking Analytics
     async getBookingAnalytics() {
-        const bookingsByStatus = await this.prisma.booking.groupBy({
-            by: ['status'],
-            _count: { id: true },
-        });
+        try {
+            const bookingsByStatus = await this.prisma.booking.groupBy({
+                by: ['status'],
+                _count: { id: true },
+            }).catch(() => []);
 
-        const recentBookings = await this.prisma.booking.count({
-            where: {
-                createdAt: {
-                    gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // Last 7 days
+            const recentBookings = await this.prisma.booking.count({
+                where: {
+                    createdAt: {
+                        gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+                    },
                 },
-            },
-        });
+            }).catch(() => 0);
 
-        return {
-            byStatus: bookingsByStatus.map(item => ({
-                status: item.status,
-                count: item._count.id,
-            })),
-            recentBookings,
-        };
+            return {
+                byStatus: bookingsByStatus.map(item => ({
+                    status: item.status,
+                    count: item._count.id,
+                })),
+                recentBookings,
+            };
+        } catch (error: any) {
+            this.logger.error(`getBookingAnalytics error: ${error.message}`, error.stack);
+            return { byStatus: [], recentBookings: 0 };
+        }
     }
 
     // FR-ANA-004: Revenue Analytics
     async getRevenueAnalytics() {
-        // Return timeseries array for the last 7 days (used by the dashboard chart)
-        const last7Days = Array.from({ length: 7 }, (_, i) => {
-            const d = new Date();
-            d.setDate(d.getDate() - i);
-            d.setHours(0, 0, 0, 0);
-            return d;
-        }).reverse();
+        try {
+            const last7Days = Array.from({ length: 7 }, (_, i) => {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                d.setHours(0, 0, 0, 0);
+                return d;
+            }).reverse();
 
-        const startDate = last7Days[0];
+            const startDate = last7Days[0];
 
-        const recentBookings = await this.prisma.booking.findMany({
-            where: {
-                createdAt: { gte: startDate },
-                status: 'COMPLETED'
-            },
-            select: {
-                createdAt: true,
-                totalAmount: true,
-            },
-        });
+            const recentBookings = await this.prisma.booking.findMany({
+                where: {
+                    createdAt: { gte: startDate },
+                    status: 'COMPLETED'
+                },
+                select: {
+                    createdAt: true,
+                    totalAmount: true,
+                },
+            }).catch(() => [] as Array<{ createdAt: Date; totalAmount: any }>);
 
-        // Map into array of { period, bookings, revenue } expected by dashboard UI
-        return last7Days.map(date => {
-            const nextDay = new Date(date);
-            nextDay.setDate(nextDay.getDate() + 1);
+            return last7Days.map(date => {
+                const nextDay = new Date(date);
+                nextDay.setDate(nextDay.getDate() + 1);
 
-            const dayBookings = recentBookings.filter(b => b.createdAt >= date && b.createdAt < nextDay);
-            
-            return {
-                period: date.toISOString(),
-                bookings: dayBookings.length,
-                revenue: dayBookings.reduce((sum, b) => sum + Number(b.totalAmount || 0), 0),
-            };
-        });
+                const dayBookings = recentBookings.filter(b => b.createdAt >= date && b.createdAt < nextDay);
+                
+                return {
+                    period: date.toISOString(),
+                    bookings: dayBookings.length,
+                    revenue: dayBookings.reduce((sum, b) => sum + Number(b.totalAmount || 0), 0),
+                };
+            });
+        } catch (error: any) {
+            this.logger.error(`getRevenueAnalytics error: ${error.message}`, error.stack);
+            return [];
+        }
     }
 
     // FR-KYC NOTIFY: Get admin notifications (unread first)

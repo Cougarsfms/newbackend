@@ -329,6 +329,17 @@ export class AdminController {
 
     // ==================== FINANCE & SETTLEMENTS ====================
 
+    @Get('payments')
+    @ApiOperation({
+        summary: 'Get all payment transactions',
+        description: 'Retrieve all Razorpay and system payment records for admin auditing',
+        tags: ['Finance & Settlements'],
+    })
+    @ApiResponse({ status: 200, description: 'Payments retrieved successfully' })
+    async getPayments() {
+        return this.adminService.getPayments();
+    }
+
     // FR-FIN-001
     @Get('wallets')
     @ApiOperation({

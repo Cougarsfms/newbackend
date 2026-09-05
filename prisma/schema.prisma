@@ -507,8 +507,14 @@ model Payment {
   customerbooking_id String?
   booking_id         String?
   amount             Decimal          @default(0)
+  currency           String           @default("INR")
   status             String           @default("PENDING")
-  method             String           @default("COD")
+  method             String           @default("RAZORPAY")
+  razorpayOrderId    String?          @unique
+  razorpayPaymentId  String?          @unique
+  razorpaySignature  String?
+  failureReason      String?
+  rawPayload         Json?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   booking            Booking?         @relation(fields: [booking_id], references: [id])

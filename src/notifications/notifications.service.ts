@@ -128,6 +128,7 @@ export class NotificationsService implements OnModuleInit {
       body,
       data,
       priority: 'high',
+      channelId: 'default',
       categoryIdentifier: 'JOB_REQUEST',
       _displayInForeground: true,
     };
