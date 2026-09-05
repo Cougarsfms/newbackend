@@ -2,15 +2,27 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
+import * as fs from 'fs';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   app.use(json({ limit: '15mb' }));
   app.use(urlencoded({ limit: '15mb', extended: true }));
 
   app.setGlobalPrefix('api');
   app.enableCors();
+
+  // Ensure uploads directory exists and configure static assets serving
+  const uploadDir = join(process.cwd(), 'uploads');
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+  app.useStaticAssets(uploadDir, {
+    prefix: '/uploads/',
+  });
 
   // Swagger Configuration
   const config = new DocumentBuilder()

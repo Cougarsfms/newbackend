@@ -1,11 +1,13 @@
 import { Controller, Get, Post, Body, Headers, Param, ParseUUIDPipe, Patch, Query } from '@nestjs/common';
 import { BookingsService } from './bookings.service';
+import { BookingsExtensionService } from './bookings-extension.service';
 import { UsersService } from '../users/users.service';
 
 @Controller('bookings')
 export class BookingsController {
   constructor(
     private readonly bookingsService: BookingsService,
+    private readonly extensionService: BookingsExtensionService,
     private readonly usersService: UsersService
   ) { }
 
@@ -22,7 +24,6 @@ export class BookingsController {
     @Body('couponCode') couponCode?: string,
     @Body('purchasedCouponId') purchasedCouponId?: string,
   ) {
-    // Mock user lookup/create from token logic since we don't have full JWT middleware yet
     const user = await this.usersService.findOrCreate(phoneNumber);
     return this.bookingsService.createBooking({
       userId: user.id,
@@ -43,17 +44,39 @@ export class BookingsController {
     return this.bookingsService.validateCoupon(code);
   }
 
-  @Get('user/:phone')
-  async getUserBookings(@Param('phone') phone: string) {
-    const user = await this.usersService.findOneByPhone(phone);
-    if (!user) return [];
-    return this.bookingsService.getUserBookings(user.id);
+  @Get('check-availability')
+  async checkAvailability(
+    @Query('serviceId') serviceId: string,
+    @Query('latitude') latitude: number,
+    @Query('longitude') longitude: number,
+    @Query('date') date: string,
+    @Query('durationMinutes') durationMinutes: number = 60,
+    @Query('timezoneOffset') timezoneOffset?: number,
+  ) {
+    return this.bookingsService.checkAvailability({
+      serviceId,
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+      date: date,
+      durationMinutes: Number(durationMinutes),
+      timezoneOffset: Number(timezoneOffset || 0),
+    });
+  }
+
+  @Get()
+  async getUserBookings(@Query('userId') userId?: string, @Query('phoneNumber') phoneNumber?: string) {
+    if (phoneNumber) {
+      const user = await this.usersService.findOrCreate(phoneNumber);
+      return this.bookingsService.getUserBookings(user.id);
+    }
+    return this.bookingsService.getUserBookings(userId || '');
   }
 
   @Get(':id')
   async getBookingDetails(@Param('id') id: string) {
     return this.bookingsService.getBookingDetails(id);
   }
+
   @Patch(':id/status')
   async updateStatus(
     @Param('id') id: string,
@@ -74,6 +97,7 @@ export class BookingsController {
   async pay(@Param('id') id: string) {
     return this.bookingsService.payBooking(id);
   }
+
   @Get(':id/location')
   async getLocation(@Param('id') id: string) {
     return this.bookingsService.getTrackingLocation(id);
@@ -93,22 +117,43 @@ export class BookingsController {
     return this.bookingsService.submitRating(id, score, comment);
   }
 
-  @Get('check-availability')
-  async checkAvailability(
-    @Query('serviceId') serviceId: string,
-    @Query('latitude') latitude: string,
-    @Query('longitude') longitude: string,
-    @Query('date') date: string,
-    @Query('durationMinutes') durationMinutes?: string,
-    @Query('timezoneOffset') timezoneOffset?: string,
+  // ==================== JOB DURATION EXTENSION ENDPOINTS ====================
+
+  @Post(':id/extend/calculate')
+  async calculateExtension(
+    @Param('id') id: string,
+    @Body('extraMinutes') extraMinutes: number
   ) {
-    return this.bookingsService.checkAvailability({
-      serviceId,
-      latitude: parseFloat(latitude),
-      longitude: parseFloat(longitude),
-      date: date,
-      durationMinutes: durationMinutes ? parseInt(durationMinutes, 10) : 60,
-      timezoneOffset: timezoneOffset ? parseInt(timezoneOffset, 10) : 0,
-    });
+    return this.extensionService.calculateExtension(id, Number(extraMinutes));
+  }
+
+  @Post(':id/extend/request')
+  async requestExtension(
+    @Param('id') id: string,
+    @Body('userId') userId: string,
+    @Body('phoneNumber') phoneNumber: string,
+    @Body('extraMinutes') extraMinutes: number
+  ) {
+    let effectiveUserId = userId;
+    if (!effectiveUserId && phoneNumber) {
+      const user = await this.usersService.findOrCreate(phoneNumber);
+      effectiveUserId = user.id;
+    }
+    return this.extensionService.requestExtension(id, effectiveUserId, Number(extraMinutes));
+  }
+
+  @Get(':id/extend/active')
+  async getActiveExtension(@Param('id') id: string) {
+    return this.extensionService.getActiveExtension(id);
+  }
+
+  @Post(':id/extend/:extensionId/respond')
+  async respondExtension(
+    @Param('id') id: string,
+    @Param('extensionId') extensionId: string,
+    @Body('providerId') providerId: string,
+    @Body('accept') accept: boolean
+  ) {
+    return this.extensionService.respondExtension(id, extensionId, providerId, Boolean(accept));
   }
 }

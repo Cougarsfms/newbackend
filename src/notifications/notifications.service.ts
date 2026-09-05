@@ -9,30 +9,100 @@ export class NotificationsService implements OnModuleInit {
   private firebaseApp: admin.app.App;
 
   onModuleInit() {
+    try {
+      if (admin.apps.length > 0) {
+        this.firebaseApp = admin.app();
+        console.log('[Notifications] Firebase Admin already initialized.');
+        return;
+      }
+
+      const credential = this.getFirebaseCredential();
+
+      if (credential) {
+        this.firebaseApp = admin.initializeApp({
+          credential,
+        });
+        console.log('[Notifications] Firebase Admin initialized successfully.');
+      } else {
+        console.warn(
+          '[Notifications] WARNING: Firebase Admin SDK could not be initialized because no valid credentials were found.\n' +
+          '  To enable FCM push notifications on your cloud backend, set one of the following:\n' +
+          '  1. Environment variable FIREBASE_SERVICE_ACCOUNT (raw JSON string or base64 of service account file)\n' +
+          '  2. Environment variables FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY\n' +
+          '  3. Place a valid firebase-service-account.json in root directory\n' +
+          '  Note: Expo Push Tokens (ExponentPushToken[...]) will still work via Expo Push API.'
+        );
+      }
+    } catch (error) {
+      console.error('[Notifications] Failed to initialize Firebase Admin:', error);
+    }
+  }
+
+  private getFirebaseCredential(): admin.credential.Credential | null {
+    // Source 1: Raw JSON string or base64 in environment variable FIREBASE_SERVICE_ACCOUNT / FIREBASE_SERVICE_ACCOUNT_JSON
+    const rawEnvJson = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    if (rawEnvJson) {
+      try {
+        let jsonStr = rawEnvJson.trim();
+        if (!jsonStr.startsWith('{')) {
+          // Attempt base64 decode if not plain JSON string
+          jsonStr = Buffer.from(jsonStr, 'base64').toString('utf8');
+        }
+        const parsed = JSON.parse(jsonStr);
+        if (parsed && parsed.project_id && parsed.client_email && parsed.private_key) {
+          console.log('[Notifications] Using Firebase Service Account from environment variable JSON.');
+          return admin.credential.cert(parsed);
+        } else {
+          console.warn('[Notifications] FIREBASE_SERVICE_ACCOUNT env var provided but missing project_id, client_email, or private_key.');
+        }
+      } catch (e) {
+        console.error('[Notifications] Failed to parse FIREBASE_SERVICE_ACCOUNT env var as JSON:', e);
+      }
+    }
+
+    // Source 2: Individual environment variables FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+    if (projectId && clientEmail && privateKey) {
+      console.log('[Notifications] Using Firebase Service Account from individual environment variables.');
+      privateKey = privateKey.replace(/\\n/g, '\n');
+      return admin.credential.cert({
+        projectId,
+        clientEmail,
+        privateKey,
+      });
+    }
+
+    // Source 3: Google Application Credentials environment variable
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
+      console.log('[Notifications] Using GOOGLE_APPLICATION_CREDENTIALS file path:', process.env.GOOGLE_APPLICATION_CREDENTIALS);
+      return admin.credential.applicationDefault();
+    }
+
+    // Source 4: Local firebase-service-account.json file on disk
     const serviceAccountPath = path.join(process.cwd(), 'firebase-service-account.json');
-    console.log('[Notifications] Checking for service account at:', serviceAccountPath);
+    console.log('[Notifications] Checking for service account file at:', serviceAccountPath);
 
     if (fs.existsSync(serviceAccountPath)) {
       try {
-        if (admin.apps.length === 0) {
-          this.firebaseApp = admin.initializeApp({
-            credential: admin.credential.cert(serviceAccountPath),
-          });
-          console.log('[Notifications] Firebase Admin initialized successfully.');
+        const fileContent = fs.readFileSync(serviceAccountPath, 'utf8');
+        const parsed = JSON.parse(fileContent);
+        if (parsed && typeof parsed === 'object' && parsed.project_id && parsed.client_email && parsed.private_key) {
+          console.log('[Notifications] Using valid firebase-service-account.json from file system.');
+          return admin.credential.cert(parsed);
         } else {
-          this.firebaseApp = admin.app();
-          console.log('[Notifications] Firebase Admin already initialized.');
+          console.warn(
+            '[Notifications] INVALID FILE: firebase-service-account.json exists on disk but is missing required properties (project_id, client_email, or private_key).'
+          );
         }
-      } catch (error) {
-        console.error('[Notifications] Failed to initialize Firebase Admin:', error);
+      } catch (e) {
+        console.error('[Notifications] Error reading/parsing firebase-service-account.json file:', e);
       }
-    } else {
-      console.warn('[Notifications] CRITICAL: firebase-service-account.json not found! Direct FCM will not work.');
-      // List files in current directory to help debug
-      try {
-        console.log('[Notifications] Files in CWD:', fs.readdirSync(process.cwd()));
-      } catch (e) { }
     }
+
+    return null;
   }
 
   async sendPushNotification(token: string, title: string, body: string, data: any = {}) {

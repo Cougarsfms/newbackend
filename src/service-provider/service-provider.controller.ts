@@ -231,6 +231,13 @@ export class ServiceProviderController {
         return this.providerService.getActiveJob(id);
     }
 
+    @Get(':id/jobs/upcoming')
+    @ApiOperation({ summary: 'Get all accepted upcoming jobs for provider (today & future)' })
+    async getUpcomingJobs(@Param('id') id: string) {
+        console.log(`[Controller] Fetching upcoming jobs for Provider: ${id}`);
+        return this.providerService.getUpcomingJobs(id);
+    }
+
     // ==================== CLOCK-IN & CLOCK-OUT (FR-PAY-003) ====================
 
     @Post(':id/clock-in')

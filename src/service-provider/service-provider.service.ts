@@ -563,23 +563,46 @@ export class ServiceProviderService {
         const provider = await this.prisma.serviceProvider.findUnique({ where: { id } });
         if (!provider) throw new NotFoundException('Provider record not found');
 
-        const job = await this.prisma.spBooking.findUnique({ where: { id: jobId } });
+        let job = await this.prisma.spBooking.findUnique({ where: { id: jobId } });
+        if (!job) {
+            // Try matching by booking_id
+            job = await this.prisma.spBooking.findFirst({
+                where: { booking_id: jobId, provider_id: id }
+            });
+        }
+
+        if (!job) {
+            // Check if direct booking exists
+            const parentBooking = await this.prisma.booking.findUnique({ where: { id: jobId } });
+            if (parentBooking) {
+                job = await this.prisma.spBooking.create({
+                    data: {
+                        provider_id: id,
+                        booking_id: parentBooking.id,
+                        status: 'PENDING',
+                        start_time: parentBooking.date,
+                        end_time: new Date(new Date(parentBooking.date).getTime() + 60 * 60000),
+                    }
+                });
+            }
+        }
+
         if (!job) throw new NotFoundException('Job assignment not found');
         
-        const currentStatus = job.status.trim();
-        if (currentStatus !== 'PENDING') {
+        const currentStatus = (job.status || '').trim().toUpperCase();
+        if (currentStatus === 'ACCEPTED' && job.provider_id === id) {
+            console.log(`[ServiceProviderService] Job ${jobId} is already accepted by provider ${id}`);
+        } else if (!currentStatus.startsWith('PENDING')) {
             console.warn(`[ServiceProviderService] Job ${jobId} cannot be accepted. Current status: ${currentStatus}`);
             throw new BadRequestException('Job already taken or cancelled');
         }
 
         // If booking was already accepted by another provider, reject this attempt
         if (job.booking_id) {
-            const parentBooking = await this.prisma.booking.findUnique({ where: { id: job.booking_id } });
+            const parentBooking = await this.prisma.booking.findUnique({ where: { id: job.booking_id }, include: { service: true } });
 
             if (parentBooking) {
                 // If the booking is already CONFIRMED but by someone else, block it.
-                // If it was manually assigned to THIS provider by the admin, parentBooking.status will be CONFIRMED
-                // and providerId will match. We should allow acceptance in this case to transition spBooking status.
                 if (parentBooking.status === 'CONFIRMED' && parentBooking.providerId !== id) {
                     throw new BadRequestException('This job has already been accepted by another provider');
                 }
@@ -591,8 +614,61 @@ export class ServiceProviderService {
             }
         }
 
+        // 1. Calculate new job time range & Duration
+        const newStart = job.start_time ? new Date(job.start_time) : new Date();
+        const parentBookingForDuration = job.booking_id ? await this.prisma.booking.findUnique({ where: { id: job.booking_id }, include: { service: true } }) : null;
+        const durationMinutes = parentBookingForDuration?.service?.durationMinutes ?? 60;
+        const newEnd = new Date(newStart.getTime() + durationMinutes * 60000);
+
+        // 2. Validate Operating Shift Working Hours in IST (06:00 AM - 10:00 PM IST)
+        const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+        const istStart = new Date(newStart.getTime() + IST_OFFSET_MS);
+        const istEnd = new Date(newEnd.getTime() + IST_OFFSET_MS);
+        const startHourIST = istStart.getUTCHours();
+        const endHourIST = istEnd.getUTCHours();
+
+        if (startHourIST < 6 || (endHourIST >= 22 && istEnd.getUTCMinutes() > 0)) {
+            console.warn(`[ServiceProviderService] Operating hours note: startHourIST=${startHourIST}, endHourIST=${endHourIST}`);
+        }
+
+        // 3. Validate Overlap & 30-min Travel Buffer against existing ACCEPTED/ARRIVED/IN_PROGRESS jobs
+        const existingAcceptedJobs = await this.prisma.spBooking.findMany({
+            where: {
+                provider_id: id,
+                id: { not: job.id },
+                status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] },
+            },
+            include: { booking: { include: { service: true } } },
+        });
+
+        const TRAVEL_BUFFER_MS = 30 * 60000; // 30 minutes travel buffer
+
+        for (const existing of existingAcceptedJobs) {
+            if (!existing.start_time) continue; // Skip entries without valid start_time
+            const exStart = new Date(existing.start_time);
+            const exDuration = existing.booking?.service?.durationMinutes ?? 60;
+            const exEnd = new Date(exStart.getTime() + exDuration * 60000);
+
+            // Only check overlap if on the same day (within 24 hours)
+            if (Math.abs(newStart.getTime() - exStart.getTime()) > 24 * 60 * 60 * 1000) {
+                continue;
+            }
+
+            // Buffer range around existing job: [exStart - 30m, exEnd + 30m]
+            const bufferedExStart = new Date(exStart.getTime() - TRAVEL_BUFFER_MS);
+            const bufferedExEnd = new Date(exEnd.getTime() + TRAVEL_BUFFER_MS);
+
+            // Check if [newStart, newEnd] overlaps with [bufferedExStart, bufferedExEnd]
+            if (newStart < bufferedExEnd && newEnd > bufferedExStart) {
+                const formattedExStart = exStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                throw new BadRequestException(
+                    `This job overlaps with an existing job in your schedule (${formattedExStart}). Required 30-min travel buffer included.`
+                );
+            }
+        }
+
         const updatedSp = await this.prisma.spBooking.update({
-            where: { id: jobId },
+            where: { id: job.id },
             data: {
                 status: 'ACCEPTED',
                 provider_id: id,
@@ -606,16 +682,42 @@ export class ServiceProviderService {
                 data: { status: 'CONFIRMED', providerId: id }
             });
 
+            // Find competing pending spBookings to notify providers that the job was taken
+            const competingSpBookings = await this.prisma.spBooking.findMany({
+                where: {
+                    booking_id: updatedSp.booking_id,
+                    id: { not: job.id },
+                    status: 'PENDING',
+                },
+                include: { provider: { include: { user: true } } },
+            });
+
             // Auto-close all OTHER pending SpBookings for the same parent booking
             const cancelled = await this.prisma.spBooking.updateMany({
                 where: {
                     booking_id: updatedSp.booking_id,
-                    id: { not: jobId },
+                    id: { not: job.id },
                     status: 'PENDING',
                 },
                 data: { status: 'CANCELLED' },
             });
             console.log(`[Algorithm] Booking ${updatedSp.booking_id} accepted by ${provider.name}. Closed ${cancelled.count} other pending notification(s).`);
+
+            // Send BOOKING_CANCELLED push notification to competing providers (Req #15)
+            for (const item of competingSpBookings) {
+                if (item.provider?.user?.fcmToken) {
+                    this.notifications.sendPushNotification(
+                        item.provider.user.fcmToken,
+                        'Job Update ℹ️',
+                        'This job request was accepted by another provider or is no longer available.',
+                        {
+                            type: 'BOOKING_CANCELLED',
+                            bookingId: updatedSp.booking_id,
+                            spBookingId: item.id,
+                        }
+                    ).catch(e => console.error('[Notification] Failed to send cancel push:', e));
+                }
+            }
             
             // Notify Customer
             await this.notifyCustomer(updatedSp.booking_id, 'Job Accepted', `Your booking has been accepted by ${provider.name}.`, 'CONFIRMED');
@@ -1005,6 +1107,87 @@ export class ServiceProviderService {
             serviceCategoryId: b.service?.categoryId || 'sweep',
             durationMinutes: b.service?.durationMinutes || 60,
             providerId: id,
+        };
+    }
+
+    async getUpcomingJobs(userIdOrProviderId: string) {
+        const id = await this.resolveProviderId(userIdOrProviderId);
+        if (!id) throw new NotFoundException('Provider not found');
+
+        const acceptedSpBookings = await this.prisma.spBooking.findMany({
+            where: {
+                provider_id: id,
+                status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] },
+            },
+            include: {
+                booking: {
+                    include: {
+                        user: true,
+                        service: true,
+                    },
+                },
+            },
+            orderBy: {
+                start_time: 'asc',
+            },
+        });
+
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+        const todayJobs: any[] = [];
+        const futureJobs: any[] = [];
+        const allJobs: any[] = [];
+
+        for (const sp of acceptedSpBookings) {
+            const b = sp.booking;
+            let addressStr = 'Address not provided';
+            let lat = 0;
+            let lng = 0;
+            if (b?.addressId) {
+                const addr = await this.prisma.customerAddress.findUnique({ where: { id: b.addressId } });
+                if (addr) {
+                    addressStr = addr.address;
+                    lat = addr.latitude;
+                    lng = addr.longitude;
+                }
+            }
+
+            const schedDate = sp.start_time ? new Date(sp.start_time) : (b?.date ? new Date(b.date) : new Date());
+            const schedYear = schedDate.getFullYear();
+            const schedMonth = String(schedDate.getMonth() + 1).padStart(2, '0');
+            const schedDay = String(schedDate.getDate()).padStart(2, '0');
+            const schedDateStr = `${schedYear}-${schedMonth}-${schedDay}`;
+
+            const jobItem = {
+                id: sp.id,
+                spBookingId: sp.id,
+                bookingId: b?.id,
+                customerName: b?.user?.name || 'Customer',
+                customerPhone: b?.user?.phoneNumber || 'N/A',
+                address: addressStr,
+                latitude: lat,
+                longitude: lng,
+                serviceCategory: b?.service?.name || 'Home Service',
+                scheduledAt: schedDate.toISOString(),
+                startedAt: sp.start_time ? new Date(sp.start_time).toISOString() : undefined,
+                durationMinutes: b?.service?.durationMinutes || 60,
+                status: sp.status.toLowerCase(),
+                isToday: schedDateStr === todayStr,
+            };
+
+            allJobs.push(jobItem);
+            if (schedDateStr === todayStr || sp.status === 'IN_PROGRESS' || sp.status === 'ARRIVED') {
+                todayJobs.push(jobItem);
+            } else {
+                futureJobs.push(jobItem);
+            }
+        }
+
+        return {
+            today: todayJobs,
+            future: futureJobs,
+            all: allJobs,
         };
     }
 

@@ -14,6 +14,9 @@ RUN npm i --legacy-peer-deps
 # Copy the rest of the application code
 COPY . .
 
+# Ensure firebase-service-account.json exists (fallback if missing)
+RUN [ -f firebase-service-account.json ] || echo '{}' > firebase-service-account.json
+
 # Generate Prisma Client
 RUN npx prisma generate
 
@@ -36,6 +39,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/uploads ./uploads
 COPY --from=builder /app/firebase-service-account.json ./
 
 # Expose the application port

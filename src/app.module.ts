@@ -12,6 +12,7 @@ import { CustomerModule } from './customer/customer.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SmsModule } from './sms/sms.module';
 import { ConciergeModule } from './concierge/concierge.module';
+import { HelpCardModule } from './help-card/help-card.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ConciergeModule } from './concierge/concierge.module';
     NotificationsModule,
     SmsModule,
     ConciergeModule,
+    HelpCardModule,
   ],
   controllers: [AppController],
   providers: [AppService],
